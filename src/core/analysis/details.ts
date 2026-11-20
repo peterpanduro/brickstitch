@@ -11,6 +11,12 @@ import type { LabelImage } from './label';
  */
 export const OUTLINE_MIN_PX = 2;
 
+/**
+ * Shortest stretch of silhouette (in multiples of `minWidthPx`) an outline stroke must follow to
+ * be grown inward; shorter groups are speckles or tips and stay as they are (R59.2).
+ */
+export const OUTLINE_MIN_RUN = 4;
+
 /** A colour within this factor of the straight Lab path between two others is a blend of them. */
 const BLEND_SLACK = 1.15;
 
@@ -290,9 +296,33 @@ function restore(
 }
 
 /**
+ * Clears the outline seeds `cand` (set in `seeds`) of every group that does not follow the
+ * silhouette for at least `minRun` px. Seeds within 2 px of each other form a group; its run is the
+ * number of its pixels that touch the background (`toBg ≤ 1`), about its length along the boundary.
+ */
+function keepContinuous(seeds: Mask, cand: readonly number[], toBg: Float32Array, minRun: number) {
+  const { width: w, height: h } = seeds;
+  const todo = new Set(cand);
+  for (const start of cand) {
+    if (!todo.delete(start)) continue;
+    const group = [start];
+    for (let i = 0; i < group.length; i++) {
+      const x = group[i]! % w;
+      const y = (group[i]! - x) / w;
+      for (let yy = Math.max(0, y - 2); yy <= Math.min(h - 1, y + 2); yy++)
+        for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, x + 2); xx++)
+          if (todo.delete(yy * w + xx)) group.push(yy * w + xx);
+    }
+    if (group.filter((p) => toBg[p]! <= 1).length < minRun)
+      for (const p of group) seeds.data[p] = 0;
+  }
+}
+
+/**
  * Interior-colour thickening: for each colour but `dominant`, the `detail` colours (already
  * thickened) and blend colours, in ascending area order, grows (inside the foreground of `out`)
- * - outline strokes (with `outline`): from its pixels next to the background whose estimated
+ * - outline strokes (with `outline`): from its pixels next to the background (groups following at
+ *   least {@link OUTLINE_MIN_RUN}·`minWidthPx` of silhouette; isolated spots are left) whose estimated
  *   stroke width is in [{@link OUTLINE_MIN_PX}, `minWidthPx`), `minWidthPx` inward (e.g. a thin
  *   black contour around a white figure);
  * - Details strokes (R42, `details > 0`): centre-line pixels (no neighbour farther from the
@@ -361,19 +391,20 @@ function thicken(
       const edge: number[] = [];
       for (let p = 0; p < labels.length; p++) if (m.data[p] && toBg[p]! <= 2) edge.push(p);
       const seeds = edge.length ? createMask(w, h) : null;
-      let any = false;
       if (seeds) {
         const d2 = edt(invert(m));
         const r = Math.ceil(minWidthPx / 2);
+        const cand: number[] = [];
         for (const p of edge) {
           const width = 2 * Math.sqrt(windowMax(d2, m, w, h, p, r)) - 1;
           if (width >= OUTLINE_MIN_PX && width < minWidthPx) {
             seeds.data[p] = 1;
-            any = true;
+            cand.push(p);
           }
         }
+        keepContinuous(seeds, cand, toBg!, minWidthPx * OUTLINE_MIN_RUN);
+        if (seeds.data.includes(1)) grow(k, seeds, minWidthPx ** 2, false);
       }
-      if (seeds && any) grow(k, seeds, minWidthPx ** 2, false);
     }
     if (details <= 0) continue;
     const { width, d2 } = strokeWidth(m, minWidthPx);
