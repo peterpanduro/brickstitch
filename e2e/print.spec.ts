@@ -15,6 +15,9 @@ test('print page without an inline PDF viewer shows the summary card', async ({ 
 });
 
 test('print page: live preview,language switch, download, back', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'pdfViewerEnabled', { value: true });
+  });
   await page.goto('/');
   await page.getByTestId('create-pattern').click();
   await page.keyboard.press('2');
