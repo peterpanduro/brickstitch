@@ -140,6 +140,30 @@ describe('reduceColours', () => {
     expect(r.at(0, 0, 0)).toBe(2);
   });
 
+  it('lets an anti-aliased blend join its neighbours instead of taking a colour slot', () => {
+    const r = run(
+      [
+        ['#ffffff', 50],
+        ['#808080', 1],
+        ['#000000', 50],
+      ],
+      { maxColors: 3 },
+    );
+    expect(r.matches.map((m) => m.index).sort()).toEqual([0, 2]);
+  });
+
+  it('keeps a thin line of a third colour between two others', () => {
+    const r = run(
+      [
+        ['#ffffff', 50],
+        ['#d02020', 1],
+        ['#000000', 50],
+      ],
+      { maxColors: 3 },
+    );
+    expect(r.matches.map((m) => m.index).sort()).toEqual([0, 2, 3]);
+  });
+
   it('maps a cluster to the nearest entry and reports the distance', () => {
     const r = run(
       [

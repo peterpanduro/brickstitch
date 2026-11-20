@@ -7,35 +7,40 @@ import type { NearestFn } from './prepare';
 const DETAIL_MIN = 0.001;
 
 const FLAT_DIST2 = 28 * 28;
+const BLEND_OFF2 = 40 * 40;
 
 /**
  * Pixels that are not an anti-aliased edge: a pixel is an edge pixel when, along a row or column,
- * both neighbours differ clearly (RGB distance ≥ 28) from it and from each other, so it lies
- * between two colours. A one-pixel line (both neighbours alike) stays flat. Edge pixels would
- * otherwise become clusters of their own.
+ * both neighbours differ clearly (RGB distance ≥ 28) from it and from each other and its colour
+ * lies on the line between theirs (within 40), i.e. it is a blend of them. A line of a third
+ * colour, or of the neighbours' own colour, stays flat. Edge pixels would otherwise become
+ * clusters of their own.
  */
 function flatPixels(data: Uint8ClampedArray, labels: Int16Array, width: number): Uint8Array {
   const n = labels.length;
   const flat = new Uint8Array(n);
-  const differs = (p: number, q: number): boolean => {
-    const r = data[p * 4]! - data[q * 4]!;
-    const g = data[p * 4 + 1]! - data[q * 4 + 1]!;
-    const b = data[p * 4 + 2]! - data[q * 4 + 2]!;
-    return r * r + g * g + b * b >= FLAT_DIST2;
+  const rgb = (p: number): number[] => [data[p * 4]!, data[p * 4 + 1]!, data[p * 4 + 2]!];
+  const sub = (u: number[], v: number[]): number[] => u.map((x, i) => x - v[i]!);
+  const dot = (u: number[], v: number[]): number => u[0]! * v[0]! + u[1]! * v[1]! + u[2]! * v[2]!;
+  const blend = (p: number, a: number, b: number): boolean => {
+    if (a < 0 || b >= n || labels[a]! < 0 || labels[b]! < 0) return false;
+    const [c, u, v] = [rgb(p), rgb(a), rgb(b)];
+    const ab = sub(v, u);
+    const len2 = dot(ab, ab);
+    if (len2 < FLAT_DIST2 || dot(sub(c, u), sub(c, u)) < FLAT_DIST2) return false;
+    const t = dot(sub(c, u), ab) / len2;
+    if (t <= 0 || t >= 1 || dot(sub(c, v), sub(c, v)) < FLAT_DIST2) return false;
+    const off = sub(
+      sub(c, u),
+      ab.map((x) => x * t),
+    );
+    return dot(off, off) <= BLEND_OFF2;
   };
-  const between = (p: number, a: number, b: number): boolean =>
-    a >= 0 &&
-    b < n &&
-    labels[a]! >= 0 &&
-    labels[b]! >= 0 &&
-    differs(p, a) &&
-    differs(p, b) &&
-    differs(a, b);
   for (let p = 0; p < n; p++) {
     if (labels[p]! < 0) continue;
     const x = p % width;
-    const row = x > 0 && x < width - 1 && between(p, p - 1, p + 1);
-    flat[p] = row || between(p, p - width, p + width) ? 0 : 1;
+    const row = x > 0 && x < width - 1 && blend(p, p - 1, p + 1);
+    flat[p] = row || blend(p, p - width, p + width) ? 0 : 1;
   }
   return flat;
 }
