@@ -88,6 +88,9 @@ export const SIDE_RUN_SHARE = 0.01;
 /** A part spanning both sides with an inscribed radius this wide (share of the short side) is scenery, not a motif. */
 export const MAX_SPAN_INRADIUS = 0.08;
 
+/** Pixels from an edge (on the ≤ 512 px planning grid) within which a part counts as touching it. */
+const EDGE_BAND = 3;
+
 /** Smallest inscribed radius in pixels for a part to count as solid. */
 const MIN_SOLID_RADIUS = 1.5;
 
@@ -131,12 +134,16 @@ export function spansOppositeSides(fg: Mask, share: number): boolean {
     const radius = Math.sqrt(inner);
     parts.push({ suspect: radius < r || radius >= MAX_SPAN_INRADIUS * Math.min(w, h) });
   }
-  const runs = (at: (i: number) => number, n: number): Map<number, number> => {
+  const runs = (at: (i: number, depth: number) => number, n: number): Map<number, number> => {
     const m = new Map<number, number>();
-    for (let i = 0; i < n; i++) {
-      const id = label[at(i)]!;
-      if (id) m.set(id, (m.get(id) ?? 0) + 1);
-    }
+    for (let i = 0; i < n; i++)
+      for (let depth = 0; depth < EDGE_BAND; depth++) {
+        const id = label[at(i, depth)]!;
+        if (id) {
+          m.set(id, (m.get(id) ?? 0) + 1);
+          break;
+        }
+      }
     for (const [id, c] of m) if (c < share * n) m.delete(id);
     return m;
   };
@@ -147,12 +154,12 @@ export function spansOppositeSides(fg: Mask, share: number): boolean {
   };
   return (
     opposite(
-      runs((y) => y * w, h),
-      runs((y) => y * w + w - 1, h),
+      runs((y, d) => y * w + Math.min(d, w - 1), h),
+      runs((y, d) => y * w + Math.max(0, w - 1 - d), h),
     ) ||
     opposite(
-      runs((x) => x, w),
-      runs((x) => (h - 1) * w + x, w),
+      runs((x, d) => Math.min(d, h - 1) * w + x, w),
+      runs((x, d) => Math.max(0, h - 1 - d) * w + x, w),
     )
   );
 }
@@ -221,7 +228,7 @@ export function foregroundMask(
   return { mask, mode: 'borderKey' };
 }
 
-/** Nearest-neighbour downsample of a mask to at most `side` on the long side. */
+/** Downsample of a mask to at most `side` on the long side: a cell is set when most of its block is. */
 function shrinkMask(m: Mask, side: number): Mask {
   const k = Math.ceil(Math.max(m.width, m.height) / side);
   if (k <= 1) return m;
@@ -230,8 +237,14 @@ function shrinkMask(m: Mask, side: number): Mask {
     Math.max(1, Math.floor(m.height / k)),
   );
   for (let y = 0; y < out.height; y++)
-    for (let x = 0; x < out.width; x++)
-      out.data[y * out.width + x] = m.data[(y * k + (k >> 1)) * m.width + x * k + (k >> 1)]!;
+    for (let x = 0; x < out.width; x++) {
+      let n = 0;
+      for (let j = 0; j < k; j++) {
+        const row = (y * k + j) * m.width + x * k;
+        for (let i = 0; i < k; i++) n += m.data[row + i]!;
+      }
+      out.data[y * out.width + x] = n * 2 >= k * k ? 1 : 0;
+    }
   return out;
 }
 

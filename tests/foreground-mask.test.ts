@@ -236,3 +236,31 @@ describe('thin streaks reaching opposite sides (R59.1)', () => {
     expect(foregroundMask(sky(400, f), DEFAULT_SETTINGS).mode).toBe('none');
   });
 });
+
+describe('the decision does not depend on the resolution (R59.1)', () => {
+  const scene = (n: number, f: (x: number, y: number) => Rgb | null) =>
+    image(n, n, (x, y) => {
+      const e = noise(x, y) * 2;
+      const c = f(x / n, y / n);
+      if (c) return [c[0] + e, c[1] + e, c[2] + e];
+      const t = Math.min(1, Math.max(0, (y - n / 2) / Math.max(4, n / 50) + 0.5));
+      return [0, 1, 2].map(
+        (k) => [120, 170, 230][k]! * (1 - t) + [244, 246, 250][k]! * t + e,
+      ) as unknown as Rgb;
+    });
+  const disc =
+    (cx: number, cy: number, r: number): ((x: number, y: number) => Rgb | null) =>
+    (x, y) =>
+      Math.hypot(x - cx, y - cy) < r ? [90, 80, 70] : null;
+  const cases: Record<string, (x: number, y: number) => Rgb | null> = {
+    bigDisc: disc(0.5, 0.6, 0.5),
+    plain: disc(0.5, 0.75, 0.1),
+    edgeDiscs: (x, y) => disc(0.08, 0.75, 0.1)(x, y) ?? disc(0.92, 0.75, 0.1)(x, y),
+    bar: (x, y) => (Math.abs(y - 0.8) < 0.03 ? [90, 80, 70] : null),
+  };
+  for (const [name, f] of Object.entries(cases))
+    it(`${name}: 512 and 1024 px resolve alike`, () => {
+      const a = foregroundMask(scene(512, f), DEFAULT_SETTINGS, 1600).mode;
+      expect(foregroundMask(scene(1024, f), DEFAULT_SETTINGS, 1600).mode).toBe(a);
+    });
+});
