@@ -1,0 +1,13 @@
+#!/bin/sh
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "gitleaks not found. Install: brew install gitleaks" >&2
+  exit 1
+fi
+gitleaks protect --staged --no-banner || exit 1
+files=$(git diff --cached --name-only --diff-filter=ACM \
+  | grep -E '\.(ts|js|svelte|json|css|html)$' | grep -v '^tests/fixtures/')
+[ -z "$files" ] && exit 0
+echo "$files" | xargs npx prettier --check || exit 1
+code=$(echo "$files" | grep -E '\.(ts|js|svelte)$')
+[ -z "$code" ] && exit 0
+echo "$code" | xargs npx eslint

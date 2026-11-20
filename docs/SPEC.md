@@ -1,0 +1,563 @@
+# Brick Stitch Pattern Tool — Specification
+
+Status: draft v1 · 2026-11-18 · Sources: a handoff note (**HO §n**) and Python prototypes (cited `file:function` / `file:Lnn`) from the design phase; they are not part of the repository.
+
+Product decisions (fixed): static client-side web app (Svelte 5 + TS + Vite, no backend); sv + en i18n for UI and PDF; seed Delica catalog + user-editable palette; local git.
+
+---
+
+## 0. Findings from the source material
+
+| # | Finding | Evidence | Consequence |
+|---|---|---|---|
+| F1 | Two different auto-ladder rules: `prune()` picks max kept beads (tie → topmost, strict `>`); guide generator picks widest single-segment row (tie → topmost). | `ripa3/lib.py:prune` L59-67 vs `ripa4/page.py` L14 | On `ripa4_rh.json` prune → r=10 (rows 10–21 all keep 268), page.py → r=17 (15 beads). Shipped guide used r=17. Merged rule §3.2. |
+| F2 | `prune` does not catch 1-bead-wide diagonal/vertical lines (each chain bead has one diagonal support). | Re-ran `_prune` on synthetic diagonal | NEW heuristic warning `thinLine` §3.3. |
+| F3 | `prune` does not enforce "max ½ bead increase per side"; notes just print `öka 2`. | `ripa4/page.py:note` | Warning, not pruning rule. |
+| F4 | Edge-note thresholds hard-coded in mm for 11/0 (`≥0.7`, `≤-1.5`, `/1.6`, `+0.8`); wrong for 15/0. | `page.py:note` | Port to half-bead (h) units (§3.4); identical for 11/0. |
+| F5 | Three incompatible row-list conventions: (a) odd rows n−1 offset +½ (`rows.json`, `sol2/ras.py`); (b) odd rows n+1 offset −½ (`ripa2.py:build`); (c) sparse `(r,h)` dict with negative h (`*_rh.json`). `ripa4/page.py` loads missing `ripa4.json`. | — | One canonical lattice (§2.3); test-only adapters for (a) and (c). |
+| F6 | Some prototypes stretch bead height to fit motif (`bh = FH*s/R`). | `ripa2.py:build` L23, `ring.py:build` L5 | Not adopted; bead height fixed per type. |
+| F7 | Ring search does not reproduce HO §3 "10 wide → 7 wide / 9 rows / 3+3". Top results: #1 R=5.9 t=0.65 (9 wide, 2/2, 26 beads), #2 R=6.35 t=0.75 (9 wide, 4/4, 30). `liten10/rows.json` (7 wide, 3/3, 24) matches no script output — likely hand-edited. | `ringopt/opt.py:search` | Ring optimiser → P3. Shipped rings are golden data for the scoring function. |
+| F8 | HO §3 says ring symmetry scores L/R and up/down; `opt.py:score` only L/R. | `ringopt/opt.py:score` L20 | OQ7. |
+| F9 | Raster sampling centred on bead in `lib.rasterize`, top-left in `ripa4/gen.py:build`. | — | Bead centre `(h·bw/2, r·bh)`, samples cover `[x−bw/2,x+bw/2]×[y−bh/2,y+bh/2]`. |
+| F10 | No prototype does colour quantisation (all hand-drawn per-colour masks). | — | §5.4 palette pipeline is NEW. |
+| F11 | Colour inconsistencies: DB-723 `#D7262B` vs `#DC241F`; DB-200 `#F7F7F5` vs `#F4F4F2`. | `ripa3/page.py:C`, `page.py:C`, `sol2/page.py:C` | Every seed RGB marked approximate. |
+
+Golden fixture values:
+
+| Fixture | Rows | Beads/row | Total | Colours | Size (11/0) | Notes |
+|---|---|---|---|---|---|---|
+| `liten/rows.json` (11/10) | 22 | 11,10,… | 231 | R69 B128 G17 Y17 | 17.6 × 28.6 mm | Ring 30 beads, all degree 2, L/R symmetric, rows 3–13, 9 wide, 4/4 |
+| `liten10/rows.json` (10/9) | 20 | 10,9,… | 190 | R54 B106 G15 Y15 | 16.0 × 26.0 mm | Ring 24 beads, all degree 2, rows 3–11, 7 wide, 3/3 |
+| `ripa4/ripa4_rh.json` (shaped) | 27 | max 15 | 268 | W231 G19 K18 | 29.6 × 35.1 mm | Segments (0-based r) r23=2, r24=3, r25=3, r26=2. Prune keeps 268 for ladders 10–21. Prune-optimal = 10; widest single-segment = 17 |
+| `ripa4/red_rh.json` | 27 | — | 268 | W227 G19 K20 R2 | same | Same geometry |
+
+---
+
+## 1. Goals, non-goals, phases
+
+**Goals**
+1. Brick stitch editor for Delica 11/0 or 15/0, panel or shaped, paint/erase, live feasibility feedback, standalone PDF guide.
+2. Image → pattern fitted into the current canvas using the user palette, then hand-edited.
+3. Static, offline, client-only; sv + en.
+
+**Non-goals:** accounts/backend/sync/sharing; non-brick stitches, fringe, off-lattice decorations; photo-real segmentation (photos = best effort + hand edit); shop integration.
+
+| Phase | Content |
+|---|---|
+| **MVP** | Lattice model; panel/shaped; palette (seed + CRUD); paint, erase (shaped), eyedropper, flood fill, undo/redo; live feasibility (unsupported, >½ increase, segments, thinLine, auto/manual ladder, "remove unsupported"); row instructions; bead table; PDF export; autosave + JSON I/O; image import (background removal alpha/border-key/threshold, palette reduction ≤N, detail priority, coverage, supersampling, optional thickening, despeckle, optional auto-prune); sv/en. |
+| P3 | Variants side by side (HO §4.6); ring optimiser; mirrored pair export; per-colour symbols for B/W printing; screen calibration. |
+| P4 | Radial compression (`sol2/compact.py:make`); outline tool (`lib.outline`); fill-row-gaps (`lib.fillrows`); mottled texture (`ripa4/summer.py`); bubble texture (`hjortron/v2.py:bubbles`); SVG input; feature placement (`orig2.py:put`). |
+| P5 | Multimodal AI contour/keypoints; Tauri wrapper. |
+
+---
+
+## 2. Domain model
+
+### 2.1 Bead types
+| id | width mm (bw) | row pitch mm (bh) |
+|---|---|---|
+| `delica11` (default) | 1.6 | 1.3 |
+| `delica15` | 1.3 | 1.15 |
+
+### 2.2 Coordinates
+Doubled `(r, h)`, `(h − r)` even. Centre `x = h·bw/2`, `y = r·bh`. Neighbours `(r, h±2)`, `(r±1, h±1)`. Geometry in h/r units; mm only for rendering/size.
+
+### 2.3 Canonical lattice
+- `W` beads in wide rows, `H` rows. Row `r` even → wide (`h = 0,2,…,2W−2`); odd → narrow (W−1 beads, `h = 1,3,…,2W−3`).
+- `h = 2i + (r mod 2)`.
+- Shaped mode: same lattice, cells may be `null`.
+- Size: width `((hmax−hmin)/2 + 1)·bw`, height `(rmax−rmin+1)·bh`.
+- Panel = all filled; a `null` gives warning `panelGaps`.
+- Rows numbered 1…H top to bottom.
+
+### 2.4 Core types
+```ts
+export type BeadTypeId = 'delica11' | 'delica15';
+export interface BeadType { readonly id: BeadTypeId; readonly widthMm: number; readonly rowPitchMm: number }
+export interface Coord { readonly r: number; readonly h: number }
+export type ColorId = string;
+export interface PaletteEntry {
+  readonly id: ColorId; readonly name: string; readonly db?: string; readonly finish?: string;
+  readonly hex: string; readonly approximate?: boolean; readonly detail?: boolean;
+}
+export type PatternMode = 'panel' | 'shaped';
+export type LadderChoice = { kind: 'auto' } | { kind: 'manual'; row: number };
+/** cells[r] has W entries (r even) or W-1 (r odd). */
+export interface Pattern {
+  readonly title: string; readonly description: string;
+  readonly beadType: BeadTypeId; readonly mode: PatternMode;
+  readonly width: number;  // 2..80
+  readonly height: number; // 1..120
+  readonly palette: readonly PaletteEntry[];
+  readonly cells: readonly (readonly (ColorId | null)[])[];
+  readonly ladder: LadderChoice;
+}
+export interface RowInfo {
+  readonly r: number;
+  readonly segments: readonly { hStart: number; hEnd: number; colors: readonly ColorId[] }[];
+  readonly count: number; readonly left?: number; readonly right?: number;
+}
+```
+
+### 2.5 Pattern file
+```jsonc
+{ "format": "brickstitch-pattern", "version": 1, "savedAt": "…", "app": "brickstitch@0.1.0", "pattern": { } }
+```
+Extension `.brickstitch.json`. No migration module in MVP (keep `version`). Hand-written type guard rejects unknown format, `version > CURRENT`, bad row lengths, dangling ColorIds. Source image never stored.
+
+---
+
+## 3. Feasibility (`core/feasibility`)
+
+### 3.1 Support and prune (port of `ripa3/lib.py:_prune`)
+Ladder row `L`: bead `(r,h)`, `r ≠ L`, is supported if `(r', h±1)` is kept, `r' = r+1` if `r < L` else `r−1`. Single outward sweep (L−1…0, then L+1…H−1) equals the prototype fixpoint; property test vs naive port. Ladder beads never removed.
+```ts
+export function supportedSet(p: Pattern, ladderRow: number): ReadonlySet<string>;
+export function prune(p: Pattern, ladderRow: number): Pattern;
+```
+
+### 3.2 Ladder selection
+Candidates: non-empty single-segment rows (else all non-empty). Rank: kept beads desc → row bead count desc → row index asc. Gives ripa4 r=17, panels row 1. Manual overrides; invalid manual → auto + warning.
+
+### 3.3 Warnings (`{code, r, h?, side?, value?}`)
+| code | Rule | Source |
+|---|---|---|
+| `floating` | Not in supportedSet **and** not connected along its row segment to a supported bead. Only these are removed by "Remove unsupported". | `lib.prune`, review R1 |
+| `needsExtraLadder` | Not in supportedSet but connected along its row to a supported bead (overhang, d ≥ 3, e.g. ptarmigan beak `page_ripa.py:75`). Warning + PDF row note. Replaces `increaseTooLarge`. | HO §1, review R1 |
+| `segments` | Row has >1 segment (info) | `page.py` |
+| `thinLine` NEW | ≥3 consecutive rows (R9) (away from ladder) where a bead is a single-bead segment with exactly one support, each supported by the previous | HO §1, F2 |
+| `panelGaps` | Panel with null cell | — |
+| `emptyRowInside` | Empty row between non-empty rows | derived |
+
+Expect: ripa4 → 0 thinLine; synthetic 3-bead diagonal → 1.
+
+### 3.4 Edge deltas (port of `page.py:note`, h-units)
+Row `r`, neighbour `b` toward ladder: `dL = left(b) − left(r)`, `dR = right(r) − right(b)`. `d = −1` normal; `d ≥ +1` → increase `k=(d+1)/2`; `d ≤ −3` → step in `k=(−d−1)/2` extra. Outer row extents only (OQ4).
+
+### 3.5 UI display
+Unsupported: red hatch + outline; thinLine: orange outline. Left gutter: row number, "L" badge, tinted ladder row, click → set ladder, "Auto" reset. Right gutter: count, ⚠ increaseTooLarge, ⑂N segments. Status bar counts, click cycles. "Remove unsupported (n)" (shaped, one undo step). Never auto-prunes.
+
+---
+
+## 4. Instructions & bead table (`core/instructions`)
+```ts
+export type RowNote =
+  | { kind: 'ladderStart' }
+  | { kind: 'increase'; side: 'left' | 'right'; count: number }
+  | { kind: 'stepIn'; side: 'left' | 'right'; count: number }
+  | { kind: 'parts'; count: number };
+export interface Run { color: ColorId; length: number }
+export interface RowInstruction { rowNumber: number; count: number; segments: Run[][]; notes: RowNote[] }
+export interface Instructions {
+  ladderRow: number; order: RowInstruction[];  // ladder, ladder-1…1, ladder+1…H (page.py L50)
+  loop: { r: number; h: number } | null; sizeMm: { width: number; height: number }; totalBeads: number;
+}
+export interface BeadCountRow { color: PaletteEntry; perEarring: number; perPair: number }
+export function buildInstructions(p: Pattern, ladderRow: number): Instructions;
+export function beadTable(p: Pattern): { rows: BeadCountRow[]; total: number; totalPair: number };
+```
+- Runs = same-colour groups per segment. Ladder row → `ladderStart` only; others → edge notes then `parts`.
+- Loop (`ripa3/page.py` L34-36): beads with `|x − x̄| < bw/2`, topmost; else null.
+- Bead table: count > 0 only; pair ×2.
+
+| code | sv | en |
+|---|---|---|
+| ladderStart | stegsöm – börja här | ladder – start here |
+| increase | öka {n} vänster/höger | increase {n} left/right |
+| stepIn | hoppa in {n} extra vänster/höger | step in {n} extra left/right |
+| parts | {n} delar – sy varje del för sig | {n} parts – sew each separately |
+| gap | · lucka · | · gap · |
+
+---
+
+## 5. Image analysis (`core/imaging` + `core/analysis`)
+
+### 5.1 Dependencies: none
+UI decodes via `createImageBitmap(file,{imageOrientation:'from-image'})` → `OffscreenCanvas` → `ImageData`; core gets `RgbaImage {width,height,data}`. Hand-rolled (~600 LOC): Zhang–Suen thinning, Felzenszwalb 1-D EDT, disk dilation, border flood fill, sRGB↔Lab, CIEDE2000. opencv.js rejected (~8 MB).
+
+### 5.2 Pipeline
+```
+RgbaImage → orient (R31) → workingResample (1 bead ≈ 12 px, max 2048) → foregroundMask (alpha|borderKey|threshold)
+ → cropToMask (sol2/ras.py L5-6) → thicken? (skeleton+EDT | dilate; sol2/thick.py, ras2.py)
+ → paletteReduce (NEW) → fit to lattice (sol2/ras.py:build) → rasterise (ripa4/gen.py:build)
+ → despeckle (NEW) → shaped: optional prune with auto ladder → Pattern
+```
+
+### 5.3 `AnalysisSettings`
+| Param | Default | Range | Source |
+|---|---|---|---|
+| `rotation`, `flipH` | 0°, false | 0/90/180/270 clockwise; mirror | NEW (R31) |
+| `background` | `auto` (R20, R30) | alpha/borderKey/threshold/none | `ras.py` L4 |
+| `threshold` | 128 (+invert) | 0–255 | `ras.py` |
+| `borderKeyTolerance` ΔE00 | 12 | 2–40 | NEW; flood from border so interior white survives |
+| `margin` | panel 1, shaped 0; 0 when stretching (R32) | 0–5 | `ras.py:build` |
+| `fit` | `auto` (R32) | auto/contain/width/height/stretch | — |
+| `supersample` | 6 | 4–8 | HO 5–8 |
+| `coverage` | 0.5 | 0.3–0.7 | lib/gen 0.5, sun 0.4 |
+| `detailThreshold` | 0.3 | 0.15–0.5 | `gen.py feat=0.3` |
+| `maxColors` | 4 | 2–8 | HO §6 |
+| `minLineWidthBeads` | 0 (off) | 0–2.5 | `thick.py` |
+| `thickenMethod` | skeleton | skeleton/dilate | HO §3 |
+| `despeckle` | true | — | NEW |
+| `fixRings` | true | — | NEW (R37) |
+| `autoPrune` (shaped) | true | — | HO §1 |
+| `panelBackground` | most common non-fg palette colour | entry | — |
+
+### 5.4 Algorithms
+- **Fit:** box `(W−2m)·bw × (H−2m)·bh`; `s` = min scale (contain); centre; mm→px; out of bounds = background.
+- **Rasterise:** ss×ss samples over bead rect; `fgFrac < coverage` → null/background; fg samples → nearest chosen colour (ΔE00, cached); first detail colour (palette order) with `count/ss² ≥ detailThreshold` wins; else majority (tie → palette order).
+- **Palette reduction (NEW):** histogram of nearest user-palette entries; drop <0.5 % unless detail ≥0.1 %; merge least-used non-detail into nearest remaining until ≤ maxColors; then detail if still over. Deterministic.
+- **Auto-detail:** if none flagged, ΔE00 > 40 from dominant and <15 % share → detail.
+- **Thicken skeleton:** `mask ∪ {p : EDT(¬skeleton)(p) ≤ minWpx/2}`, `minWpx = minLineWidthBeads·bw/s`. **Dilate:** disk radius `minWpx/2`.
+- **Despeckle:** non-detail bead whose colour is in none of its 6 neighbours → neighbours' majority.
+- Perf: main thread, 250 ms debounce; Worker only if measured necessary.
+
+### 5.5 Import UX
+Modal: image, settings, live preview (same SVG scene). Apply = one undo step; palette merged. Size/mode from current canvas, with shortcut fields.
+Implemented ("Mönster från bild" wizard, R53, replaces the modal): top-bar "Från bild" button or image drop (images vs `.brickstitch.json` by type/extension); UI decode pre-downscales to 2048 px. Candidate palette = pattern palette (+ library and seed colours when ticked; `maxColors` still limits). Per-colour detail toggles apply to the pattern palette. Preview debounced 250 ms on the main thread (≈ 40–140 ms measured on a 400×480 image, 30×36 shaped, 41 candidates). Apply replaces cells, size, mode and bead type with the target, resets the ladder to auto and merges new colours as one undo step. Last settings persist as `analysis` in `bs:v1:settings`. Settings are saved on Apply only. The picture shows the processed image with live slider highlights (R39) and a segmented "Så tolkas den | Original" toggle (R52.5); the Details slider is R42. Known limitations: detail toggles list the pattern palette only (library/seed colours added by the checkbox keep their own flag), and flags of unused colours are not written back; decoding (EXIF orientation, real photos, large images) is verified manually in the browser, not by automated tests.
+
+---
+
+## 6. Palette (`core/palette`)
+```ts
+export function hexToLab(hex: string): Lab;
+export function deltaE2000(a: Lab, b: Lab): number;   // Sharma 2005 test data
+export function nearest(lab: Lab, entries: readonly PaletteEntry[]): PaletteEntry;
+export const SEED_CATALOG: readonly SeedColor[];      // { db, names:{sv,en}, finish?, hex, approximate:true }
+```
+| DB | sv / en | hex (approx.) |
+|---|---|---|
+| DB-200 | Vit / White | #F7F7F5 |
+| DB-010 | Svart / Black | #1C1C1C |
+| DB-1139 | Ghost gray | #A3A8AE |
+| DB-723 | Röd / Red | #D7262B |
+| DB-726 | Kobolt / Cobalt | #0035AD |
+| DB-724 | Grön / Green | #007229 |
+| DB-721 | Gul / Yellow | #FFCE00 |
+| DB-722 | Orange | TBD |
+| DB-1132 | Canary | TBD |
+| DB-2274 | Burnt orange | TBD |
+| DB-2291 | Mörkgrön / Dark green | TBD |
+| DB-734 | Choklad / Chocolate | TBD |
+| DB-2286 | Pecan | TBD |
+| DB-2105 | Beige | TBD |
+
+TBD → eyeballed at implementation, `approximate: true`, "≈" badge in UI. User library (localStorage) CRUD; pattern palette is a copy; deleting an in-use colour requires a replacement.
+
+---
+
+## 7. Architecture
+```
+src/
+  core/            pure TS, no DOM lib (compiler-enforced)
+    geometry/ pattern/ palette/ feasibility/ instructions/ scene/ imaging/ analysis/ persist/ i18n/
+  export-pdf/      Instructions + Scene + i18n → PDF bytes (jsPDF), runs in node
+  ui/              Svelte 5 components, runes state, storage adapter, image decode, downloads
+```
+Rule: `ui → export-pdf → core`, `ui → core`; core imports nothing outside core (ESLint `no-restricted-imports` + no-DOM tsconfig).
+
+```ts
+export type Shape =
+  | { t: 'bead'; xMm: number; yMm: number; wMm: number; hMm: number; fill: string; mark?: 'unsupported' | 'thin' }
+  | { t: 'circle'; cx: number; cy: number; r: number; stroke: string; fill?: string }
+  | { t: 'line'; x1: number; y1: number; x2: number; y2: number; stroke: string }
+  | { t: 'text'; x: number; y: number; text: string; size: number; anchor: 'start' | 'end' | 'middle' };
+export interface Scene { widthMm: number; heightMm: number; shapes: Shape[] }
+export function diagramScene(p: Pattern, ins: Instructions, opts: { rowNumbers: boolean; counts: boolean; ladder: boolean; loop: boolean; warnings?: Warning[] }): Scene;
+export interface KeyValueStore { get(key: string): string | null; set(key: string, v: string): void }
+export interface PdfInput { pattern: Pattern; instructions: Instructions; table: ReturnType<typeof beadTable>; locale: Locale }
+export function renderPdf(input: PdfInput): Promise<Uint8Array>; // lazy-imports jspdf
+```
+Editor renders SVG from the same Scene; hit-test pointer mm → cell in O(1). Undo: snapshot stack of cells, depth 100, drag coalesced.
+
+| Track | Modules | Depends |
+|---|---|---|
+| A | geometry → pattern → feasibility → instructions | — |
+| B | palette | — |
+| C | imaging | — |
+| D | i18n | — |
+| E | scene/svg | geometry, pattern |
+| F | persist | pattern, palette types |
+| G | analysis | geometry, palette, imaging, feasibility |
+| H | export-pdf | instructions, scene, i18n |
+| I | UI editor | pattern, feasibility, scene |
+
+---
+
+## 8. PDF export
+**jsPDF**, lazy-loaded, drawing Scene primitives 1:1 (vector). Chosen over print-CSS (print dialog "fit to page" breaks real size, not testable, unreliable in Tauri) and pdf-lib (no rounded rect / text wrap, font embed needed). Std-14 WinAnsi likely covers åäö –·; **spike to verify**, fallback: embed one subset TTF (~60 KB).
+
+Content (A4 portrait, 15 mm margins, locale chosen at export, R27):
+1. Title + meta: `Miyuki Delica 11/0 · {H} rader · ca {W}×{H} mm (exkl. ögla/krok) · {N} pärlor per örhänge`; panels add `växelvis {n} och {n−1} pärlor per rad`.
+2. Optional description. No reference to source image (HO §4.9).
+3. Real-size preview 1:1 + 10 mm scale bar + "print at 100 %".
+4. Diagram (≤120 mm wide): row numbers left, counts right, ladder tinted + labelled, loop marker, light tint behind shaped.
+5. Bead table: swatch, name, DB+finish, per earring, per pair, total; "buy a few extra".
+6. Page break; How to sew: ladder + direction, meaning of notes, segments (if any), loop, reading rows backwards, mirror tip for pair.
+7. Row by row in ladder order, 3 columns, no split rows: `Rad k (count)`, notes, runs `3 vit 2 svart`, `· lucka ·`.
+8. Footer page x/y; no app branding. Filename `{slug}.pdf`.
+
+---
+
+## 9. Persistence
+| Key | Content | When |
+|---|---|---|
+| `bs:v1:autosave` | Pattern file | 500 ms debounce + `visibilitychange` |
+| `bs:v1:palette` | User palette library | On change |
+| `bs:v1:settings` | `settingsVersion: 2`, locale, zoom; analysis settings only once applied (R33) | On change; analysis on import Apply |
+
+Restore autosave silently; "New" confirms if dirty. Import via picker + drag-drop → validate → migrate → replace (one undo step). Export JSON as Blob. Quota errors → non-blocking banner.
+
+---
+
+## 10. UI
+(Superseded by the redesign, R43–R57.) Single page: toolbar (New, Open, Save JSON, Import image, Export PDF, sv/en), palette panel left, canvas + gutters centre, warnings bar bottom.
+- New dialog: bead type, mode, W (panel 11 / shaped 20), H (panel 22 / shaped 28), panel background, live mm readout for both bead types.
+- Tools: paint (click/drag), empty brush (shaped), eyedropper, flood fill, ring (R36); undo/redo ⌘Z/⇧⌘Z; zoom; colours 1–9.
+- Resize W/H with anchor; horizontal shifts in even h.
+- Real-size toggle via CSS mm (calibration P3).
+
+---
+
+## 11. Test plan
+| Module | Cases |
+|---|---|
+| geometry | parity; h↔i; neighbours; sizes liten 17.6×28.6, liten10 16.0×26.0, ripa4 29.6×35.1; 15/0 scaling |
+| pattern | paint/erase/flood; resize keeps parity; ripa4 segments; colour counts for all fixtures |
+| feasibility | sweep == naive fixpoint (property); ripa4 kept per ladder (0→217, 1–7→219, 8–9→254, 10–21→268, 22→263, 23→262, 24→254, 25→248, 26→224); auto ladder row 18 (1-based); panels row 1; synthetic diagonal → thinLine, ripa4 none; beak d=+1 → increase 1; d=+3 → increaseTooLarge |
+| instructions | ripa4 order `[18,17,…,1,19,…,27]`; panel n−1→n → increase 1 L+R; step-in d=−3→1, d=−5→2; panel loop mid row 1; pair ×2 |
+| palette | ΔE00 vs Sharma 34 pairs (±1e-4); hex↔Lab; nearest |
+| imaging | Zhang–Suen 3-px line → 1-px; EDT vs brute force; border flood keeps enclosed white |
+| analysis | circle → symmetric; thin diagonal + minLineWidth 2 → no thinLine; detail dot wins; maxColors deterministic; panel no nulls |
+| persist | round trip; rejects bad version/rows/dangling colour; migration hook |
+| i18n | sv/en key parity; note formatting snapshots |
+| export-pdf | bytes in node; page count; text contains "Rad 1"/"Row 1", DB numbers, totals; no source-image wording |
+
+Fixtures copied to `tests/fixtures/`; test-only adapters `fromRowsJson`, `fromRhJson` (`h' = h − hmin`, parity-preserving). Sun replaced by synthetic ray masks.
+
+E2E (Playwright, 3 smoke, not in pre-commit): (1) new panel → paint drag → reload → restored; (2) shaped floating bead → warning → remove unsupported; (3) export PDF → bytes start `%PDF`.
+
+---
+
+## 12. Tooling
+| Package | Kind | Why |
+|---|---|---|
+| svelte 5 | runtime | decided |
+| jspdf | runtime, lazy chunk | §8 |
+| vite, @sveltejs/vite-plugin-svelte, typescript | dev | stack |
+| vitest | dev | TDD |
+| svelte-check | dev | types in .svelte |
+| eslint, typescript-eslint, eslint-plugin-svelte, globals | dev | lint + boundaries |
+| prettier, prettier-plugin-svelte | dev | format |
+| @playwright/test | dev | 3 smoke tests |
+| @fontsource-variable/inter 5.3.0, @fontsource-variable/fraunces 5.3.0 | runtime (font files only, Latin wght subset) | bundled UI fonts, offline (R45) |
+
+Not adopted: zod, svelte-i18n, husky/lint-staged, opencv.js, colour libs.
+
+Layout: `src/core`, `src/export-pdf`, `src/ui`, `tests/fixtures`, `e2e/`, `docs/`, `.githooks/`, `CLAUDE.md`. `tsconfig.core.json` (no DOM, strict, `noUncheckedIndexedAccess`), `tsconfig.app.json`. Vite `base: './'` (static host/subpath; `file://` not supported — use `npx serve dist`). Hooks via `core.hooksPath=.githooks`: pre-commit gitleaks + prettier + eslint on staged; pre-push `npm run check && npm test`.
+
+Commands: `dev`, `build`, `preview`, `test`, `test:watch`, `check` (svelte-check + tsc core), `lint`, `format`, `e2e`.
+
+---
+
+## 13. Decisions & open questions
+
+Decided by product owner (2026-11-18):
+- D1 Auto ladder = most kept beads → widest → topmost (§3.2). Manual override always available.
+- D2 Colour labels in row list/diagram: user-set `name` if set, else DB number (e.g. `3 DB-200 2 DB-010`). Palette `name` becomes optional; seed entries ship without a name override.
+- D3 Edge notes on outer row edges only in MVP (OQ4 closed; per-segment later).
+- D4 No MRs: commit directly to `main`.
+- D5 "Line sensitivity" = one slider `lineSensitivity` (0–1) that (a) sets `minLineWidthBeads` (0 → 2.5) applied per colour mask (silhouette **and** each detail-colour mask, skeleton+EDT), and (b) lowers `detailThreshold` (0.5 → 0.15). No edge/outline detection in MVP. Only the silhouette and detail colours are thickened, plus other colours' thin strokes with the Details slider (R42); thin-line skeleton per R40.
+- D6 Seed catalog hex values researched from public bead charts, all `approximate: true`, editable in-app. Catalog may be extended beyond the 14 handoff colours with common Delica 11/0 opaques.
+
+Open:
+2. Must ladder row be one segment? (assumed yes)
+3. thinLine threshold ≥2; should single dangling beads (beak, toe) warn? (`page_ripa.py` L75 hand-wrote an extra-ladder note for the beak)
+4. Apply increase/step-in per segment, not only outer edges?
+5. 15/0 geometry 1.3 × 1.15 mm — confirm.
+6. Option for narrow first row?
+7. Ring score up/down symmetry term (P3).
+8. Trustworthy Delica hex source; flag dyed colours?
+9. jsPDF glyph coverage (–, ·, ×, ≈) — spike in M10.
+10. One auto loop marker in MVP? (flag guide says "öglor")
+11. Mirrored pair: text note or mirrored diagram (P3)?
+12. Despeckle on by default?
+13. Canvas limits W ≤ 80, H ≤ 120 enough?
+14. Per-colour symbols in MVP for B/W printing?
+15. CSS mm real-size OK for MVP?
+16. Row-list colour labels: name, DB number, or short code?
+
+---
+
+## 13b. Revisions after spec review (supersede earlier sections)
+- R1 F3 was wrong: d ≥ 3 overhangs are already unsupported in prune. Split into `floating` / `needsExtraLadder` (§3.3). "Remove unsupported" and analysis `autoPrune` remove only `floating`. **Anchored** (one outward sweep from the ladder): a row segment is anchored if it is on the ladder row or any of its beads has a support (`h ± 1`, row toward the ladder) that is anchored; every bead of an anchored segment is anchored. Supported ⊆ anchored. `needsExtraLadder` = anchored ∧ ¬supported; `floating` = ¬anchored. So a bead resting on an extra-ladder bead cascades to `needsExtraLadder`, not `floating`; prune keeps ⊇ the prototype fixpoint, equal when no bead needs an extra ladder.
+- R3 Lattice parity: row shifts (resize, adding rows on top) must be by an even number of rows; otherwise wide/narrow flips. Resize-with-anchor → P3; MVP has New + crop-to-content only. Crop-to-content trims the top by an even number of rows (one empty top row may remain) and the bottom fully (`bottom = H − 1 − lastNonEmpty`, no parity rounding); columns in whole beads.
+- R4 `fromRhJson`: `r' = r − rmin`; `h' = h − a` with `a = hmin` if `hmin ≡ rmin (mod 2)` else `hmin − 1` (keeps `(h' − r')` even, leftmost h' ∈ {0,1}); `W = ⌊hmax'/2⌋ + 1 + (hmax' mod 2)`. Unit-test with ripa4 (hmin −38, rightmost bead on odd row).
+- R5 Loop point in integer h-units: candidates `|h − h̄| ≤ 1` (h in half-bead units, i.e. within half a bead; evaluated as `|N·h − Σh| ≤ N`); at even width pick the left-of-centre bead in the topmost row (matches prototype output for liten10). No floating-point comparison.
+- R6 Row numbering everywhere (gutter, instructions, PDF) = non-empty rows numbered from the topmost non-empty row (`page.py:59`).
+- R8 Anti-aliasing: samples with alpha/edge blend weighted down; median 3×3 at working resolution before nearest-colour mapping. Test: black stroke on white with W/G/K palette → no G beads.
+- R9 `thinLine`: one warning per chain; chain = ≥3 consecutive rows of single-bead segments each with exactly one support. 4-bead synthetic diagonal → 1 warning.
+- R10 F9 correction: `gen.py:47` centres x, starts y at top edge. Spec keeps centred sampling in both axes.
+- R11 `PaletteEntry`: `name?` optional user override; seed names resolved at render time from `db` + locale. Label = user name ?? DB number (D2).
+- R12 Auto ladder pinned during a drag stroke; recomputed on stroke end. Feasibility uses integer cell indices, not string keys.
+- R13 Benchmark Zhang–Suen/EDT at 2048 px in the analysis work; Worker if >250 ms.
+- R14 Panels: no per-row "increase 1 L+R" notes; one general instruction in the sew section (`liten/page.py:56`). Edge notes only for shaped patterns.
+- R15 Extra-ladder note: `{ kind: 'extraLadder'; side: 'left' | 'right' | 'inner'; count }`, side relative to the row's supported beads (a row with no supported bead labels all as `left`), `count` = `needsExtraLadder` beads on that side (k − 1 for an outer increase of k). On that side the `increase` note becomes `increase 1` when a supported bead steps out past the neighbour row (a real sewing step), and is dropped only when no supported increase bead exists. Strings use plural pairs (`_one`/`_other` by `n === 1`): sv `extra stegsöm {side}: 1 pärla / {n} pärlor`, en `extra ladder {side}: 1 bead / {n} beads`; `parts` likewise. `analyse()` lives in `core/analyse.ts` (depends on feasibility and instructions; instructions → feasibility only).
+- R16 Panels may contain `null` cells on load (`panelGaps` is a warning, §2.3); the parser rebuilds the pattern from validated fields only. Autosave `load()` returns the parse result (or `storage` error), `null` only when nothing is stored. Paint/fill with a colour id not in the palette throws.
+- R17 Anti-alias median (R8) is a **masked** 3×3 per-channel median: only foreground pixels vote (lower median on even counts) and pixels whose nearest colour is a detail colour are left unchanged, so 1-px strokes on a keyed background survive. Core `median3` is not used by analysis.
+- R18 Blend weighting (R8): a pixel whose two neighbours along one axis differ from it and from each other (background counts as a colour) votes with weight 0.25; votes and bead coverage are also weighted by pixel coverage (0..1).
+- R19 Working resolution: crop to the mask bbox first, then box-downscale (premultiplied, alpha = mask) to ~12 px per bead when the motif has > 18 px per bead; the working mask is `alpha > 0`. The 2048 px long-side guard runs before masking.
+- R20 Alpha mask is α ≥ 128. `background: auto` picks alpha only when ≥ 0.5 % of pixels have α < 128, else see R30.
+- R21 Thickening width in px uses the scale of the pre-thicken bbox; the fit then uses the thickened bbox, so thickened lines end up slightly thinner than `minLineWidthBeads`.
+- R22 `maxColors` includes the panel background, which is pinned in palette reduction. Panel background `auto` = most common palette colour of background pixels, else the most common foreground colour (ties: palette order).
+- R23 Panel fill runs before despeckle (background speckles are cleaned too).
+- R24 Edge unmixing (borderKey/threshold, background colour b = median of background pixels): a foreground pixel 4-adjacent to background, with no non-edge foreground neighbour of the same nearest colour, is modelled as `b + t(p − b)`; among palette colours whose segment is within RGB distance 16, the one farthest from b wins, label = p, coverage × t. Thin anti-aliased black strokes map to black, flat grey regions stay grey.
+- R25 Degenerate input: a 1×1 opaque image in borderKey mode is all background, so the result is empty.
+- R26 Scene API (supersedes §7 snippet, see `src/core/scene/types.ts`): `diagramScene(p, analysis: Analysis, opts: SceneOptions, reuse?: Scene)` with optional layers `rowNumbers | counts | ladder | loop | warnings | slots` and `ladderLabel`. `Scene` = `background` (ladder tint) + `rows` (per-row bead/slot shapes, reused by reference from `reuse` when cells, marks, palette and layout are unchanged) + `overlay` (gutter texts, markers, loop; reused when equal), plus `origin` (lattice top-left) and `gutterLeftMm`; `sceneShapes(scene)` flattens in paint order. Shapes: `bead`, `slot`, `rect`, `circle`, `line`, `text`, and `marker` (`alert` | `segments` + value) drawn by the renderer instead of ⚠/⑂ glyphs; bead/slot carry `(r, h)`; bead marks are `floating | extraLadder | thin`. All colours opaque `#rrggbb`; stroke widths and font weight in `SCENE_STYLE`; per-shape SVG attributes come from one helper `shapeElements` used by `sceneToSvg` and the editor. `hitTest(p, xMm, yMm)` and `cellsAlong(p, a, b)` take lattice-local mm.
+- Scope cuts to P3: `persist/migrate.ts` (keep `version`), dilate thicken (skeleton only), auto-detail, `emptyRowInside`, resize-with-anchor. E2E: 1 smoke test (paint → reload → export PDF).
+- jsPDF: pin version; verify html2canvas/dompurify/canvg excluded from bundle. Font spike decides jsPDF vs ~250 LOC hand-written PDF writer.
+- R27 PDF (supersedes §7/§8 where they differ): jsPDF 4.2.1 with standard Helvetica (WinAnsi), no embedded font (OQ9 closed: å ä ö é – · × • ½ encode; ≈ ⁄ do not and are not used in PDF strings). Every drawn string passes `pdfSafe` (look-alikes such as ≈→~, anything else such as emoji dropped), because one non-WinAnsi glyph makes jsPDF re-encode the whole string. html2canvas/dompurify/canvg are aliased to `build/optional-stub.js`. `renderPdf({ pattern, analysis, table, locale, realSize?, compress? })`; `analysis` replaces `instructions` (the scene needs it). The export dialog picks the PDF locale (default: UI locale) and the real-size preview, and warns about floating beads. The diagram keeps warning marks (white halo for contrast) and markers; floating beads also get a sew-section note. Meta line: bead · rows · panel alternation · size (locale decimal separator) · beads. Bead table: label per D2, plus the DB number under a user name, the localised seed name when different, and finish.
+- R28 Empty cells (`slot`) show a faint `/` (opaque light grey `SCENE_STYLE.slotSlash`, width `stroke.slotSlash`, bottom-left to top-right inside the slot inset by `SLOT_SLASH_INSET`) so they cannot be confused with white beads. Geometry comes from one helper `slotSlash` used by `shapeElements` (editor SVG) and the PDF renderer; the PDF diagram draws slots, the real-size preview shows beads only. Bead outlines stay non-white; in the PDF they are at least 0.1 mm wide.
+- R29 PDF layout limits: the diagram is cropped to the motif's cell bounds (no empty slot columns/rows outside the beads; slots inside keep the slash; row numbers stay R6). Diagram scale ≥ 2× real size: when it does not fit on page 1 it gets its own pages after the bead table, split by lattice row ranges (row numbers, ladder band and loop on the page of their row); only motifs wider than ~50 beads (2× wider than the 180 mm text width) fall back to page width. Row list: run labels are ellipsised to the column width and runs wrap; an entry taller than a column is split with a `Rad k (forts.)` / `Row k (cont.)` heading; nothing is drawn below the bottom margin. Bead table labels are ellipsised before the count columns; the detail (DB number/seed name/finish) is shortened or dropped. Count strings use `_one`/`_other` plurals (`pdf.meta.rows`, `pdf.meta.beadsPerEarring`, `pdf.sew.ladder*`). The largest real-size preview (80 × 120 Delica 11/0 = 128 × 156 mm) fits one page (test). The print page (R54) can be left at any time, also while a preview or download renders; a result that arrives after leaving is dropped (no download, no preview URL). `fileSlug` folds ø æ ß đ ł œ þ to ASCII.
+- R30 Auto background and border seed: the dominant border colour is the per-channel median of the border pixels in the most common border colour bin (4 bits per channel). Non-alpha `auto` resolves to borderKey only when ≥ 80 % of the border pixels are within `borderKeyTolerance` (ΔE00) of it, else to `none` (full-bleed image, e.g. a flag; the per-channel median of a mixed red/blue border was blue and the fill removed the whole blue field). Explicit borderKey is also seeded with the dominant colour (supersedes the median seed). The import stats line shows the resolved mode.
+- R31 Source orientation: `AnalysisSettings.rotation` (0/90/180/270, clockwise) and `flipH` (mirror left-right, applied before the rotation), defaults 0/false; the pipeline applies them right after the 2048 px guard, before masking. Stored settings without these fields load with the defaults. The import dialog has rotate-left/right buttons and a mirror toggle next to the thumbnail (CSS-transformed); they are saved with the settings on Apply. Flag earrings hang from the pole side (red on top), so a landscape flag is rotated 90°.
+- R32 Fit `stretch` scales each axis to the margin box independently (aspect ignored; prototype F6 stretched flags too); `Fit` carries `mmPerPx` (x) and `mmPerPxY`. Default `fit` is `auto` = stretch when the resolved background is `none` (full-bleed image), else contain; stored explicit values (e.g. `contain`) are kept. Margin `auto` is 0 when stretching, so a full-bleed image fills the whole panel. `AnalysisStats.fit` reports the resolved fit.
+- R33 Settings storage: `bs:v1:settings` carries `settingsVersion: 2`. Loading unversioned settings migrates `analysis.fit: contain` to `auto` once (v1 saved defaults the user never chose). Analysis settings are written only after an import Apply; locale/zoom saves keep a stored analysis as is and omit it when none is stored. The import dialog's rotate buttons show `↺ 90°` / `↻ 90°` with aria-labels.
+- R34 Import dialog size: Width and Height each have an "Auto (from image)" checkbox (`import.autoSize`); at most one is set (`AnalysisSettings.autoSize`: `'width' | 'height' | null`, default null, old settings load null, saved on Apply, ignored by the pipeline). The auto side is disabled and shows `proportionalSize` of the other side (`ui/state/proportions.ts`): the oriented image (rotation 90/270 swap its sides) aspect times bead width / row pitch in mm (`BEAD_TYPES`), rounded and clamped to width 2..80, height 1..120. It recomputes on width/height edits, rotation and bead type. The whole image is used, not the foreground bounding box, so the background mode has no effect on it. Unchecking keeps the shown value as a manual size.
+- R35 Ring optimiser core (`src/core/ring`, pure; editor Ring tool and import auto-fix build on it later). OQ7 closed: symmetry is scored on both axes. F7 correction: `opt.py:search(4,8,15.0)` does produce the `liten10` ring (R=4.9, t=0.7, on bead/on row, overall #8 because the prototype ranks by max width, not target width; a max-width 11.2 mm search misses it only because `7·1.6 > 11.2` in floating point), so liten10 is reproducible, not hand-edited.
+  - `ringCandidates({ beadType?, targetWidthBeads | targetDiameterMm, thicknessMm?: {min,max}, centres?: RingCentre[], maxCandidates? = 6 })` → `RingCandidate[]`, best first. Search: centre kinds `{ onBead, onRow }` (on the anchor bead or half a bead right of it × on the anchor row or half a row below; `centres` filters, default all four); R in 0.05 mm steps over `(w−1)/2·bw ± 1.5 mm` (w = target in beads, `D/bw` for a mm target); t over the thickness range (default 0.55–0.9) in 0.05 mm steps; ring = cells with `|d − R| ≤ t` (bead centres §2.2). Cell sets identical up to translation are merged (lowest score kept); ties break on the normalised cell key, so output is deterministic. Throws `RangeError` when the target is < 3 beads or missing, `maxCandidates` is not an integer ≥ 1, the thickness range is not `0 < min ≤ max`, or `centres` is empty.
+  - `RingCandidate`: `cells` relative to the anchor bead (`h − r` even, so any lattice cell is a valid anchor), `centre`, `radiusMm`, `thicknessMm`, `score` (all `RingScore` fields + `widthMissBeads`).
+  - `scoreRing(cells, beadType?)` → `RingScore` (lower `total` is better): `10·breaks + 5·clumps + 5·lrAsym + 5·udAsym + 3·|widthMm − heightMm| + 8·spreadMm + 5·contourMm` (`RING_WEIGHTS`); the search adds `20·|widthBeads − target|`. breaks/clumps = beads with < 2 / > 2 ring neighbours. Axes pass through the extent centre. `lrAsym` = beads without an exact one-to-one mirror in their row. `udAsym`: on a row axis, exact mirrors; across a row boundary the mirrored row has the other parity, so upper beads `(r, h)` pair with `(r2 − r, h + s)` for one global `s ∈ {−1, +1}` (the better one). spread = std dev of distances from the extent centre. `contourMm` = RMS over rows of the outer half-width (outermost bead edge) minus the half-width at that row of the ellipse with semi-axes `widthMm/2`, `heightMm/2`. Also reports bead count, width/height in beads and mm (§2.3), top/bottom longest runs.
+  - Ring tool API: `ringCellsAt(pattern, candidate, anchor)` → `{ cells, clipped }` (cells on the lattice; `clipped` = how many fell off); `placeRing(pattern, candidate, anchor, color)` → `{ pattern, clipped }` via `paintCells`; both throw `RangeError` when `anchor.h − anchor.r` is odd. `ringAnchorFromClick(pattern, xMm, yMm, candidate)` → the anchor (any lattice cell, possibly off the pattern) whose ring centre for the candidate's centre kind is nearest the point (lattice-local mm, as `hitTest`; ties: smaller r, then h).
+  - Golden: liten (30 beads, 9×11, 4/4) and liten10 (24, 7×9, 3/3) score 0 breaks, 0 clumps, 0 asymmetry. With on-bead centres (the kind that centres them on their 11/10 and 10/9 panels) both rank #1 for 9 and 7 wide; unfiltered both rank #2 behind an equally perfect between-bead ring (9 wide: R=6, 28 beads, 3/3; 7 wide: R=4.65, 22 beads, 2/2). For widths 3–20 on both bead types the best ring has 0 breaks/clumps/asymmetry and the exact target width. Search takes < 40 ms for widths 7–15 (`VITE_PERF=1` benchmark asserts < 100 ms).
+- R36 Editor Ring tool (builds on R35; logic in `ui/state/ring.ts`, `RingPanel.svelte`). Toolbar tool "Ring" (sv/en). No tool shortcut: tools have no letter keys (only 1–9 for colours), so one would not fit the scheme. While active, a side panel shows: outer width in beads (3..30, default `min(9, W − 2)`, at least 3; reset on New), a collapsed "Thickness (advanced)" section (custom `min ≤ max` range in mm, invalid input ignored; off = optimiser default), the ring colour (= the editor's current colour, a select over the palette), "Centre horizontally" (panels only, default on), and up to 6 candidates as a radiogroup (arrow keys) of small previews (bead shapes via `ShapeList`, `beadRect` now exported from `core/scene`), each with bead count, `width × height` mm (`formatMm`, locale decimal separator, now in `core/i18n` and also used by the new-pattern readout and the size summary) and top/bottom runs, best first. Candidates that look alike (same count, size and runs) are different shapes (the search already dedupes by `ringKey`), e.g. the two 9-wide 30-bead rings differ in their second and second-last rows; changing an option selects the first candidate. Search = `ringCandidates` memoised by (beadType, width, thickness, centres), last 16 results, on the main thread.
+  - Canvas: hover shows a ghost of the selected candidate (on-lattice cells, 55 % opacity, not part of the pattern or scene); a click places it with `placeRing` in the current colour as one undo step (nothing without a colour). When cells fall off the lattice a dismissable banner says `{n} beads were outside the canvas` (plural pair `banner.ringClipped`); the next placement replaces or clears it. Keyboard fallback: with the Ring tool the canvas is focusable; arrow keys move the ghost (starting at the canvas centre), Enter/Space place it. Pointer: non-primary pointers are ignored and the pointer is captured; mouse/pen place on press, touch shows the ghost on press and places on release at the final position (`placesOnRelease`), cancel places nothing. The ghost is reassigned only when its cell changes, hidden without a colour, and cleared on New/Open (`patternEpoch`), not on edits. New and Open reset the ring options; undo, redo, New, Open and tool switches clear the clipped banner. A polite live region announces `Ring placed (N beads)` (`ui.ringPlaced`, N = beads on the lattice). Candidate radiogroup: arrows wrap, Home/End jump; the selected index is clamped to the candidate count (`ringSelectedIndex`).
+  - Centre horizontally (panel and checkbox on): candidates are restricted to on-bead centres (`onRow` both) and the anchor is snapped to `h = W − 1` (the middle column); the pointer picks only the row: the nearest row whose parity allows `h − r` even (ties: smaller r). So a centred ring can only sit on every other row (the rows where the middle column has a bead); arrow keys move it two rows and not sideways; turning centring on (or changing the candidate) re-snaps the ghost (`resnapAnchor`). Without centring (or on shaped patterns) the anchor is `ringAnchorFromClick` and arrow keys move one bead / one row (zig-zag `h ∓ 1` to keep parity). Test: 11×22 and 10×20 panels, width 9 / 7, pointer on row 8 / 7 → exactly the liten (30 beads, 4/4) and liten10 (24 beads, 3/3) ring cells.
+- R37 Auto-fix rings on import (`AnalysisSettings.fixRings`, default **on**; stored settings without it load the default). A ring stroke in the source rarely rasterises into a clean bead ring, so the pipeline detects it on the source pixels and replaces it with an optimiser ring (R35).
+  - Detection (`core/analysis/rings.ts`, `detectRings(l, opts)`), on the label image after palette reduction and before thickening. Edge set E = labelled pixels with a 4-neighbour of a different label (`−1` counts), both sides kept, pixels on or outside a crop border excluded (a side of the labelled bounding box that is more than half labelled, i.e. a straight image edge; a curve that only touches the box keeps its edge pixels); E is counted first and then stride-sampled (≤ 4000 points) in a second pass. RANSAC with a seeded mulberry32 PRNG (the pipeline stays deterministic): 400 triplet circumcircles, radius from 0.4 bead (so 3- and 4-bead rings are found) to half the larger lattice dimension (px), inlier band `ε = max(1 px, 0.03R)`; hypotheses rank by covered angle bins (72), then inliers. The best is refined twice by a Kasa least-squares fit over its inliers and accepted when its inliers cover ≥ 90 % of the 72 bins and the RMS residual ≤ `max(0.04R, 0.6 px)` (the floor is the pixel staircase of small circles); its inliers are removed and the search repeats, up to 12 circles (stops at the first rejected one). Concentric circles (centre distance ≤ `max(1.5 px, 0.1·w)`) pair into strokes (`R_in`, `R_out`, `w`, `R_m`), each circle used at most once: of the verified pairs, the disjoint set with the most strokes, then the smallest total radius difference (smallest-difference-first alone paired the white gap of a concentric double ring and lost both rings). Ray verifier over the 72 angles: `L_m` at `R_m`, `L_o` at `R_out + δ`, `L_i` at `R_in − δ`, `δ = max(1, w/4)` px; a bin passes when `L_m ≥ 0`, `L_m ≠ L_o`, `L_m ≠ L_i` and `L_m` also holds at `R_m ± 0.3w`; `strokeLabel[θ] = L_m`. Rejected: ray coverage < 0.9; a run of more than 2 consecutive failed bins (10°, circular), so a C or G is never closed into an O; a background band (in most passing bins `L_m` reappears beyond another label both towards the centre and within 3 stroke widths outside, e.g. the gap between two rings on a panel); a circle without partner or a filled disc; an ellipse (≳ 1.1 axis ratio in the source fails the bin coverage).
+  - Replacement (`core/analysis/ring-fix.ts`): `cropLabels` returns its offset `(x0, y0)`; px → mm is `xMm = fit.ox + (px − x0 + 0.5)·fit.mmPerPx` (y with `mmPerPxY`). Skipped: an outer-diameter aspect (mm, per axis) > 1.35, a stroke wider than `1.75·bw` (larger mm-per-px axis). Candidate widths `round(min(Dx, Dy)/bw) .. round(max(Dx, Dy)/bw)` (≥ 3); per width the optimiser's best candidate with a thickness range from the source stroke (`t` is a half-width: `w_mm/2 ± 25 %` in 0.05 mm steps, floor 0.55 mm, the optimiser's default minimum), placed at the snapped anchor and skipped when clipped. The source stroke = beads of the rasterised unerased image whose label is the stroke label at their angle and whose centre is within half a bead of the annulus. The chosen width matches the source stroke's extent best (`|Δwidth| + |Δheight|` mm), then has the best IoU with it (over shifts of up to one row/bead), ties to the wider one (when every width in the range is clipped: one bead narrower than `round(min)`). A ring is skipped when both `round(max(Dx, Dy)/bw)` and one bead narrower are clipped at the snapped anchor (the source ring is cut by the edge; a crop-box test misfired on the outer ring of a keyed double ring, whose fitted edge lies about 1.5 px past the crop). (Plain IoU picked 8 for the flag, whose rasterised stroke is 8 × 11 while the 9-wide liten ring is 9 × 11; the extent rule gives 9 there and 9, not 10, for a ring tangent to a stripe.) `ringCandidates` is injected through `AnalyseDeps` (the UI passes the editor's memoised search). On a panel whose ring centre is within `bw/2` of the lattice centre line, candidates are on-bead only and the anchor is `ringAnchorCentred` (the centred branch of the Ring tool, in `core/ring/place.ts`), else `ringAnchorFromClick`. A ring overlapping an already planned one retries without overlap (widths `round(min) − 1 .. round(max) + 1`, first with its own thickness, then the thinnest, 0.55 mm); when none fits, its whole concentric group (centre distance ≤ `max(1.5 px, 0.1·w)`) stays unfixed, so a pair is never half fixed. The old ring is erased: an annulus pixel (`|d − R_m| ≤ w/2 + 1.5` px) takes the label and coverage of the pixel at the same angle at `R_out + δ` (when `d ≥ R_m`) or `R_in − δ` (off-image: `−1`, coverage 0). The erased image is thickened and cropped with the original thickened image's box, so fit and scale are the same with and without `fixRings`. New ring beads are painted with the `strokeLabel` of the angle bin of the bead centre (nearest valid bin within 2 bins; no label: the bead is left as rasterised), so bi-coloured rings keep their colours. The ring overwrites whatever the cells it occupies held (accepted: the replacement ring may cover a bead of a neighbouring feature).
+  - Order: reduce → detect → thicken original (box, fit) → rasterise original (reused as the result when no ring is planned) → plan → erase, thicken and rasterise the erased image → panel fill → paint rings → despeckle with ring cells locked (`despeckle(cells, detail, locked?)`) → autoPrune unchanged. Without a replaced ring the output is identical to `fixRings` off. Stats: `ringsFound` (verified strokes), `ringsReplaced`, `rings: [{ cells, widthBeads, centreMm, prunedBeads }]` (`prunedBeads` counts only painted ring beads).
+  - Import dialog: "Fix rings" checkbox next to despeckle, `{n} rings fixed` in the stats line (plural pair `import.ringsFixed`; the line is built by `importStatsText` in `ui/state/import-merge.ts`), and a dashed outline of the replaced cells over the preview (ghost style, 55 % opacity).
+- R38 Import crop (UI only, `ui/state/crop.ts`, `CropView.svelte`). The import dialog's image view is larger (up to 18rem, aspect kept; a canvas whose long side is 576 px, about 2× its CSS size, drawn from a downscaled bitmap of the decoded image with the current rotation/mirror, no smoothing when upscaling; no full-resolution copy is kept, pixels are read only by `cropImage`) and takes a crop selection: pointer drag (mouse, touch, pen; primary pointer only, captured) on empty space starts a new rectangle, inside moves it, corners/edges (10 CSS px tolerance, 22 for touch) resize it; the outside is darkened and the rectangle has 8 handles (drawn larger on coarse-pointer devices). Arrow keys on the focused view move the selection by 1 % of the image side (at least 1 px), Shift+arrows move the right/bottom edge, Alt+arrows the left/top edge; the first arrow without a selection seeds a centred 80 % rect. The "Reset crop" button clears the crop, and Escape anywhere in the dialog clears a set crop first (the dialog's `cancel` is prevented) and closes the dialog only when there is none. The hint lists the keys and a polite live region announces `W × H px` (`import.crop`, `import.cropReset`, `import.cropHint`, `import.cropKeys`, `import.cropSize` sv/en). The selection is drawn on the oriented image but stored in source px (`orientedRectToSource` / `sourceRectToOriented`, round-trip tested for all 4 rotations × mirror), so it stays on the same content when rotating or mirroring. Integer px, clamped to the image, at least 8×8 (or the image side when smaller); a selection covering the whole image is no crop. The crop is applied before analysis (`cropImage(img, rect)`, then the unchanged pipeline with the rotation/mirror settings) and its size feeds `proportionalSize` (R34). It is committed on pointer release (preview uses the existing 250 ms debounce), is per dialog/image, not saved in settings, and starts empty for each opened image. The old CSS-rotated thumbnail (`import.thumbAlt`) is gone.
+- R39 Processed import picture with live slider highlights (supersedes the earlier Image/Background/Lines/Rings view switch: `ViewSwitch.svelte`, `import.view.*`, `import.legend.*`, `import.ringSkip.*`, the Rings overlay and `planRings`' skip reasons are removed; the owner found the switch confusing). Every preview runs with `AnalyseDeps.debug: true` (same 250 ms debounce) and `ImageAnalysis.debug` (`core/analysis/debug.ts`) holds:
+  - `labels`: palette index per working-resolution (label-image) pixel of the image that is rasterised — after line thickening, the outline and Details steps (R42) and, when rings were replaced, the ring-erased re-run with the erased ring strokes put back where the replacement rings go — `-1` = background, with `palette` (hex per index). Downsampled by an integer stride to ≤ 1024 px long side: each block takes its most common colour (ties: first in scan order; background only without colour), except that pixels on a 1 px line (both neighbours along an axis share another colour — not an anti-alias fringe between two colours) outvote the rest (`labelLayer`).
+  - `backgroundMask`: 1 = background (not in the foreground mask), nearest-downsampled to ≤ 1024 px; `background` = the resolved mode.
+  - `added`: pixels whose label thickening changed (line and outline thickening; the Details step's pixels are excluded); `details`: pixels the Details slider kept from the unfiltered image or added (R42); `thin`: `strokeSkeleton` pixels of the pre-thicken silhouette and of every colour but the dominant one (panel background, else the largest area) whose local width `2·d − 1` is below `minLineWidthPx` (all empty when no thickening runs); label-image resolution, OR-downsampled to ≤ 1024 px. `thin` is computed lazily on first read (only the Line sensitivity highlight needs it) on the motif box plus one pixel, which gives the same skeletons as the padded image; an injected `ThinCache` (`createThinCache()`, one per wizard visit, `AnalyseDeps.thinCache`) keeps the per-colour skeleton parts (`skeletonParts` / `skeletonFromParts` in `core/imaging/thicken.ts`) of the last label image, so dragging Line sensitivity (which only changes the pad and the width test) reuses them. The wizard reads `thin` once the settings are idle for 600 ms, so the first drag is warm too.
+  - Every layer carries `transform {x0, y0, sx, sy}`: layer pixel-edge coordinates → px of the oriented, cropped input; the UI adds the crop's top-left on the oriented image (`layerToDisplay`, tested against the real pipeline for 4 rotations × mirror × crop, including `labels`).
+  - Without `debug` the output is identical and no layer is built (tested); with it, the output equals the plain run plus `debug`, deterministic. Cost (node, median of 7; plain → with debug): flag 2048×1536 → 40×60 at sensitivity 1: 117 → 117 ms; line drawing 2048×1536 → 80×60 at 0.8: 216 → 223 ms (+4 %). Reading `thin` cold adds 75–80 % on the large images; during a Line sensitivity drag (cache warm) the preview is +7 % / +11 % over plain.
+  - UI: the picture shows the **processed image** by default once a result for the current crop and orientation exists (before that, or while a new crop/orientation is computing, the original): a checkerboard (two greys, 8 CSS px squares) for the removed background, every label pixel in its palette colour (smoothing only when the layer is downsampled for display), drawn on one canvas layer between the image canvas and the crop SVG (`aria-hidden`). Cropping works unchanged on top.
+  - Live highlight (`ui/state/highlight.ts`, plain-TS state machine, `activeSlider: 'edge' | 'lines' | 'details' | null` with a 500 ms release delay, injectable timers, tested): pointer down on Edge tolerance or Threshold (`edge`), Line sensitivity (`lines`) or Details (`details`) presses; pointer up/cancel anywhere, the slider losing pointer capture, or the window losing focus releases; a value change without a pointer press (keyboard) pulses (press + release, extended by each change). While active, the latest preview's layer is drawn over the processed image: `edge` the removed background in magenta (~45 %), `lines` added pixels orange and thin skeletons blue, `details` the Details pixels green.
+  - Original vs processed (superseded by R52.5): the picture card's segmented radio pair "Så tolkas den | Original" ("How it is read | Original", `wizard.view.*`) switches between the processed and the unprocessed oriented image (sticky, not press-and-hold; the original keeps the `CHECKER` background behind transparent pixels). While a highlight is active a legend chip on the picture, also read by a polite live region, says what the colour means (`wizard.legend.*`, `pictureLegend` in `ui/state/overlay.ts`); `import.caption.*`, `import.showOriginal` and `imageCaption` are removed.
+- R40 Thin-line thickening at every angle. Zhang–Suen (as implemented) erases diagonal staircases with an even number of pixels per row (2, 4, …) from their ends, so a 1–2 px diagonal (typical after the R19 downscale) kept only a few skeleton pixels and was rasterised as a dot. Thickening grows around `strokeSkeleton(mask, minWidthPx)` (`core/imaging/thicken.ts`): the Zhang–Suen skeleton of the mask, plus — only where it has no pixel within 2 px — runs of the Zhang–Suen skeleton of the mask widened by one pixel to the right (the other parity, so it keeps those staircases) that lie in strokes thinner than `minWidthPx` (local width `2·d − 1`) and are at least `max(3, minWidthPx/2)` px long. Elsewhere the skeleton, and so the thickening, equals the plain Zhang–Suen one (tested on discs, squares, bars, rings and A/X/V letters wider than the minimum width: identical to the pre-R40 result; a reviewer comparison of 256 pipeline runs against `main`, including a thick and a thin "A", showed no change). Chosen over (a) a medial-axis/EDT ridge test (the true medial axis has branches into every corner, so wide shapes would grow bumps at corners), (b) dilating already-thin strokes without thinning (needs a thinness test that also fires at corners, and overshoots the width), and (c) a 3×3 dilation before thinning (keeps the parity, still fails). Cost: a second Zhang–Suen per thickened mask, plus an EDT when the widened skeleton adds pixels. Test: 1, 1.5, 2 px lines at 0–150° (anti-aliased and aliased, with and without the working downscale) at sensitivity 0.8 rasterise as one connected bead component spanning ≥ 90 % of the line length.
+- R41 Detail-colour suggestions — removed (owner decision): `suggestDetail`, `core/analysis/suggest.ts`, `ui/state/suggest.ts`, the "Thin lines – mark as detail?" hint with its Mark button and the strings are gone; thin strokes inside the motif are handled by the Details slider (R42). `prepareStage` / `labelStage` (`core/analysis/stage.ts`) stay as the pipeline's first stages.
+- R42 Details slider ("Detaljer" / "Details", `AnalysisSettings.details`, 0–1, default 0, after Line sensitivity, hint "Shows or hides thin lines and small details inside the motif" / "Visar eller döljer tunna linjer och små detaljer inuti motivet"; saved with the analysis settings, stored settings without it load as 0). It acts on every colour except the dominant one (panel background, else the largest label area), beyond the outline + detail-flag thickening of D5, and only while line thickening runs (`minLineWidthPx > 1`). Strokes at least `detailsMinWidth = (1 − details) · minLineWidthPx / 2` wide are kept, down to 1 px at 1 (owner rule) (`core/analysis/details.ts`):
+  - Blend colours are never kept, thickened or seeded (`blendColours`, the R8/R17 test): a colour is a blend when on at least half of its boundary pixels it lies (ΔE00 sum ≤ 1.15 × their distance) on the Lab path between two other colours found within 2 px (the removed background counts as its sampled palette colour, `Prepared.outside`). This removes the anti-alias fringe (grey between black and white, pink between red and white), which as the smaller-area colour used to win: before, a 6 px anti-aliased bird outline went from 140 black beads at Details 0.75 to 0 black / 149 grey at 0.9, and a line drawing from 137 black at 0.5 to 31 black / 227 grey at 1.
+  - Median protection (`restoreThinStrokes`, in `labelStage` after palette reduction): the unfiltered working crop is labelled (nearest colour, then the reduction map); per non-blend colour, a pixel outside the colour's opening by a disc of diameter `minLineWidthPx` (EDT, erode, EDT) whose estimated stroke width `2 · max d − 1` (d = distance to the outside, separable van Herk box maximum over a `minLineWidthPx / 2` window) is at least `detailsMinWidth` takes its unfiltered label, so 1 px lines survive the masked median.
+  - Thickening (`thickenDetails`, after `thickenLabels`, also for the ring-erased re-raster): per colour (not dominant, not a detail colour, not a blend), in ascending area order, the centre-line pixels (no 8-neighbour farther from the outside) of strokes whose estimated width is in [`detailsMinWidth`, `minLineWidthPx`) are grown by `minLineWidthPx / 2` inside the foreground; pixels of a smaller (earlier) colour or a detail colour are not overwritten, so small details win. (A Zhang–Suen skeleton was used first; the centre-line test gives the same results on the tests and costs one EDT instead of two thinnings.)
+  - Outline strokes (independent of Details, fix of a bug also on `main` 9214da9): a thin contour of a non-dominant colour around a motif whose inside is another colour (e.g. a ≈ 0.4-bead black circle around a white disc on a white, border-keyed background, shaped 30×34) is not part of the silhouette's thickening (the silhouette is the whole disc) and not a detail colour, so it lost almost every bead's colour vote: 4 black beads of the circle (26 without despeckle), while the processed image showed the circle. Ring fixing was not involved (no ring detected). Now, whenever the background is removed (mode ≠ `none`) and line thickening runs, the thickening step also seeds, per non-dominant, non-detail, non-blend colour, from its pixels next to the background (squared distance ≤ 2) whose estimated stroke width (max distance to the outside over a `minLineWidthPx / 2` window) is in [2 px, `minLineWidthPx`), and grows them `minLineWidthPx` inward (same claim rules; shown as `added`, not as `details`). The 2 px floor and the width test keep anti-alias rims and wide colour fields out (a first version without them turned 11 black O/C/G beads grey, 15 red ones pink, and bulged the blue half of a red/blue square into the red at the corners). Tests: the circle has black beads in all 24 angle bins at Details 0 and 1 and the X stays absent at 0; the anti-aliased O, C, G (black and red) have no fringe colour and at least as many stroke beads as `main`; the red/blue square equals `main` (476/459 shaped 30×34, 333/319 panel 24×30); the anti-aliased bird keeps > 100 black beads at 0.
+  - Anti-aliased monotonicity tests (bird with a 6 px outline on transparent, line drawing; shaped 30×34 and panel 24×30; Details 0, 0.25, 0.5, 0.75, 0.9, 1): black beads never drop by more than 3 % from one step to the next and no grey bead appears. Binary tests: black X lines inside a black circle on white are absent at 0 and present, continuous, in all four arms at 1; from 0 to 1 the black bead count never drops and at most 3 % of the black beads of the lower value are lost. Reviewer comparison against `main` (`brcmp`, 13 images × 2 targets): bird 6 px at 1: 144 black / 0 grey (before 0 / 149); line drawing at 1: 252 black / 0 grey shaped, 205 / 0 panel (before 31 / 227, 24 / 184); O, C, G at 0: identical to `main` (before 11 black → grey, 15 red → pink); red/blue square: identical to `main` (before 4 beads bulged); flag at 0 identical. Known edge case: O, C, G in black at 30×34 loses 3 of 29 black beads at 0.9, where enclosed white (non-dominant there) counts as a detail.
+  - With the background mode `none` (e.g. the flag) at Details 0 neither step runs and the output is bit-identical to before (tested with spies and against stored settings without `details`; checked against `main` for the flag at 6 targets × sensitivity 0/0.5/1 × 400/1600 px: identical). Keyed images change at Details 0 only through the outline rule.
+  - Cache: `createDetailsCache()` (one per wizard visit, `AnalyseDeps.detailsCache`) keeps the last result of the median-protection and thickening steps and returns it for equal inputs (label arrays compared by content, scalar parameters), so dragging other sliders that leave the labels unchanged (e.g. Coverage) pays nothing for Details (tested: equal output to an uncached run). Cost (node, median of 7, catalogue palette): line drawing 2048×1536 → 80×60 delica11 at sensitivity 0.5: Details 0 282 ms, Details 1 349 ms cold, 210 ms warm (Coverage drag); delica15 at 0.8: 299 / 387 / 234 ms; flag 2048×1536 → 40×60 at sensitivity 1: 171 / 260 / 134 ms. Plain preview of that line drawing on `main`: 227 ms.
+- R43 UI redesign (supersedes §10, §5.5 "Modal", the R27 export dialog, the R34/R38 dialog layout and the R36 toolbar/side-panel placement where they differ). Reference: `docs/redesign/README.md`; the mockups (`png/01…05b`, `html/*`) and before-captures were removed after implementation; they remain in git history up to commit 76481da, and `docs/redesign/png/after-*.png` show the shipped app. Mockup references below (`png/…`) point into that history; mockup content and numbers were illustrative. Build plan: `docs/redesign/PLAN.md`. Only existing functionality is redesigned, plus the theme choice (R45) the owner added; every behaviour of R1–R42 keeps working (feasibility, ladder, ring tool, crop, rotation/mirror, Details slider, processed picture with live highlights, settings persistence, PDF). Pure logic lives in `src/ui/state/*.ts` (unit-tested); components stay thin.
+  - **Out of scope** (not built, no UI, no strings): Spegla/mirror painting; shape starters (Droppe, Romb); click-to-pick background ("Jag pekar ut den"); "Mina mönster" list; 1 kr coin; B/W symbols; mirrored pair (screen or PDF); screen calibration ("Ställ in skärmen"); history panel (clock button); Hjälp; "Flytta" tool; tool letter shortcuts; PDF content toggles other than real size; paper size (US Letter); print-page thumbnails column; "Skapa en egen färg" in the picker (custom hex stays in the entry editor).
+- R44 Navigation. Four views, one at a time, hash-routed: `#/` editor, `#/new` start page ("Nytt mönster"), `#/import` ("Mönster från bild"), `#/print` ("Skriv ut mönster"). `ui/state/route.ts` (pure):
+  - `parseRoute(hash, ctx)` with guards, also applied on reload/deep link: `#/import` without a decoded image in memory → editor (a reload drops the image, so a reloaded `#/import` always lands in the editor via `location.replace('#/')`); `#/print` with an empty pattern (`analysis.instructions` absent) → editor (`replace`); unknown → editor. A reloaded `#/print` with a pattern stays on the print page; a reloaded `#/new` stays on the start page.
+  - Entering a view from the editor pushes a history entry (`location.hash = …`). Leaving (header "‹", Escape, Apply, Skapa mönster, "Åtgärda först") calls `history.back()` when the view was entered from the editor in this session (tracked in memory, `ctx.enteredFromEditor`), else `location.replace('#/')`, so back never leaves the app or loops between views. `leaveAction({ enteredFrom }, to = 'editor') → 'back' | 'replace'` is pure and tested (`back` when the view was entered from `to` in this session; leaving the import back to the start page uses `to = 'new'`). `createRouter(deps)` holds the current route and each view's origin; `App.svelte` hands every view a `ViewNav` (`go(route)`, `leave(to?)`, `openImage(file, target)`). View contract: the root element carries `data-view="{route}"` and contains one `h1 tabindex="-1"`; each view handles its own Escape (App does not); the start view exports `drop(file)`, which App calls for files dropped on `#/new`; the start page's `StartState` (`ui/state/new-pattern.ts`: `{ method: 'draw' | 'image', choice }`, `initialStartState()`) is kept by App (`bind:start`, shape opaque to App) for the session, so an import cancel keeps it.
+  - First run (`firstRun`) opens `#/new` (replaces the auto-opened New dialog). Leaving import/print without Apply never changes the pattern. Global shortcuts (undo/redo/1–9) act only in the editor view. File drop: in the editor and on the start page an image opens `#/import` (from the start page with the page's choices, R55) and a `.brickstitch.json` opens as today (start page: after the R55 confirmation, then to the editor); ignored in import/print. The drop-hint overlay (`ui.dropHint`, dashed `--accent` border on `--surface` at 80 %) shows only where a drop is accepted. Escape in import/print/start = leave (import clears a set crop first, R38). On every view change focus moves to the view's `h1` and `document.title` becomes `{view} – Brick Stitch`, where `{view}` is the view name ("Nytt mönster", "Mönster från bild", "Skriv ut mönster") and, in the editor, the pattern title (empty → "Namnlöst mönster").
+- R45 Visual language and theme. Tokens are CSS custom properties on `:root` in `src/ui/app.css`.
+  - Theme: `Settings.theme: 'system' | 'light' | 'dark'` (default `system`), chosen in the "Arkiv" menu (desktop) / "···" menu (touch) as a radio group "Utseende: System / Ljust / Mörkt" ("Appearance: System / Light / Dark"), saved immediately like the locale. Applied as `data-theme="light" | "dark"` on `<html>` (attribute removed for `system`). CSS: light values on `:root`; dark values on `:root[data-theme="dark"]` and inside `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { … } }`; `color-scheme` follows. `settingsVersion` becomes 3: stored settings without `theme` (v1, v2) or with an invalid value load `system`; the R33 `fit: contain → auto` migration now runs only for unversioned (v1) settings (`settingsVersion === undefined`), not for v2 (today's `!== SETTINGS_VERSION` test would re-migrate v2 after the bump). Tested in `tests/ui/settings.test.ts`.
+  - Colours (light / dark): `--bg #F4EFE7 / #161513`, `--surface #FFFDF9 / #211F1C`, `--surface-2 #EEE7DB / #2B2824`, `--line #E0D7C8 / #3B372F` (decorative dividers only), `--line-strong #857C6C / #807766` (NEW: borders of inputs, checkboxes, radios, slider tracks; ≥ 3:1 on surface and surface-2: 4.06/3.35 light, 3.72/3.32 dark), `--ink #26221D / #F2ECE2`, `--muted #6A6256 / #A99F90` (mockup `#70685C` is 4.47:1 on surface-2), `--accent #1F5F5B / #74C7BC`, `--accent-ink #FFFFFF / #0C2926`, `--accent-soft #D9EAE6 / #1F3B38`, `--warn #A8530A / #F0B35B`, `--warn-soft #FBEBD0 / #3B2D14`, `--danger #B3261E / #F2897F`, `--danger-soft #F9DEDA / #40201C`, `--ok #276F44 / #7CCB98` (mockup `#2B7A4B` is 4.40:1 on ok-soft), `--ok-soft #DDEFE3 / #1D3526`, `--ladder #F6DF9A / #6B5A22` (text on it is `--ink`: 11.99 / 5.75), `--paper #FFFFFF / #383430`, `--shadow` as in `html/editor.html`. Accent = primary action and selection only; amber = start row and things to look at; red = errors (banners, failed export) only. The R39 highlight colours are unchanged. Until every component is restyled, `app.css` keeps the old variable names as aliases (`--panel: var(--surface-2)`, `--text: var(--ink)`, `--canvas-bg: var(--bg)`, `--line`, `--muted`, `--accent`, `--danger`, `--ok` map to the new tokens); P7 removes the aliases.
+  - Type: Inter for UI (14 px / 1.4 base; 400/500/600), Fraunces for view and dialog titles (600, letter-spacing −0.01em). Scale 11/12/13/14/15/18/22/28 px; counts use `tabular-nums`. The editor SVG gutter text and the PDF keep their own fonts (PDF Helvetica, R27).
+  - Fonts are bundled, never fetched at runtime: `@fontsource-variable/inter@5.3.0` and `@fontsource-variable/fraunces@5.3.0` (exact pins, OFL-1.1, licences in the packages). `src/ui/fonts.css` declares two `@font-face` rules pointing only at the Latin wght-axis files (`inter-latin-wght-normal.woff2` 48 KB, `fraunces-latin-wght-normal.woff2` 37 KB; Latin = U+0000–00FF, U+2000–206F, …, so å ä ö é – · × are covered), `font-weight: 100 900`, `font-display: swap`; the packages' CSS is not imported (it would add Cyrillic/Greek/Vietnamese files to `dist`). 85 KB total. Rejected: Google Fonts (runtime network, privacy, offline); committed `pyftsubset` subsets (~35 KB smaller but a manual binary step nobody can review); opsz/full axis files (+103 KB, no visible gain at our sizes). Fallbacks `Inter, system-ui, -apple-system, "Segoe UI", sans-serif` / `Fraunces, Georgia, serif`. `≈` (U+2248) falls back to the system font.
+  - Spacing on a 4/8 px grid; radii 6 (chips) / 8 (small controls) / 10 (controls) / 12 (cards) / 14 (floating cards); controls 40 px (`.btn`, also `.btn.sm`, which only has smaller text and padding, and segmented items), large 48 px; ≥ 48 px under `(pointer: coarse)` (R56).
+  - Icons: `Icon.svelte` + `ui/icons.ts` with the mockups' 24 px stroke paths (stroke 1.7, round caps; drawn for this project, no icon dependency), including `check`, `alert`, `start` (↗ arrow), `ruler`, `chevron`. Status marks (✓, ⚠, ↗, ›) are always `Icon`s, never text glyphs: they are outside the Latin font subset and ⚠ renders as emoji on iOS. In this spec ✓/⚠/↗ denote those icons. Icons always come with a visible label, except undo/redo/zoom/close/overflow, which have `aria-label` + tooltip; decorative icons are `aria-hidden`.
+  - Editor beads: rounded rects (radius ≈ 18 % of bead height) plus a shared gloss overlay (one `<linearGradient>`: white 35 % top → transparent → black 15 % bottom), editor only, PDF unchanged. `shapeElements` adds a `class` per shape kind (`bs-bead`, `bs-slot`, `bs-text`, `bs-ladder` (tint rect; the ladder label text is `bs-text bs-ladder`), `bs-loop`, plus `bs-marker` on the segments marker; mark outlines get none) so the editor restyles gutter text, slots, markers and ladder tint with tokens in both themes; the PDF renderer ignores it. Gloss: `shapeElements(shape, hatchId, glossId)` with a gradient id rounds the bead by `EDITOR_BEAD_ROUNDING` (0.18 × height) and adds a `bs-gloss` rect (no `data-*`, `pointer-events: none`) between the bead and its mark; without `glossId` (string SVG, real-size pair) output is unchanged apart from the class. Budget: a paint frame on an 80 × 120 pattern < 16 ms; if exceeded, no gloss above 4000 beads. Measured 2026-11-19 (production build + `vite preview`, headed Chrome, 1440 × 900, 120 Hz display, 80 × 120 panel = 9540 beads, 20 paint drags, rAF frame intervals + `long-animation-frame` observer): with gloss p50 8.3 ms, p95 9.7–10.0 ms, 10–16 of ~845 frames > 17.5 ms (max 25–33 ms), no long animation frames (> 50 ms); with the gloss rects removed p50 8.3 ms, p95 9.8 ms, 15–16 frames > 17.5 ms (max 42 ms). Gloss adds no measurable cost, so it stays on for every size and the cutoff is not used.
+- R46 Editor layout, desktop ≥ 1024 px (`png/01-editor.png`, `png/01c-editor-dark.png`, minus R43 out-of-scope items). Grid: top bar 60 px; rail 80 px | canvas 1fr | right panel 328 px.
+  - Top bar: logo + "Brick Stitch"; title with pencil (inline edit = `setTitle`; empty → placeholder "Namnlöst mönster" / "Untitled pattern"); save pill (R50); spacer; Ångra / Gör om (icon + label, tooltips with the platform keys); "Arkiv" / "File" menu (Nytt mönster → `#/new`, Öppna fil…, Spara som fil = today's New / Open / Save JSON, and "Utseende" (R45); takes the out-of-scope "Mina mönster" slot); "Från bild" (secondary: file picker → `#/import`); "Skriv ut mönster" (primary → `#/print`; disabled with tooltip `ui.emptyPattern` when empty); SV/EN segmented control.
+  - Left rail: vertical radiogroup of 72 × 72 tool buttons, icon above label: Måla, Sudda (shaped only, hidden on panels as today), Fyll, Plocka färg, divider, Ring. Arrow keys move and select (roving tabindex). No key badges, no Flytta, no Hjälp.
+  - Canvas area (`EditorView` overlay slots: tool card, real-size pair, zoom bar, toasts): dotted `--bg`; the pattern on a `--paper` sheet (radius 16, shadow). Floating **tool card** top-left: "{tool} · {hint}" (Måla "klicka eller dra", Sudda "klicka eller dra", Fyll "klicka i ett område", Plocka färg "klicka på en pärla", Ring "klicka där ringen ska sitta") and the current colour (swatch, name, DB). For Ring the card contains all R36 options unchanged, including the ring colour `<select>` over the palette, width, thickness (advanced), centre horizontally and the candidate radiogroup; `RingPanel` content moves here. Floating **real-size card** top-right (R49). The fitted sheet and its start pill keep clear of the floating cards: `canvasPadding` (`ui/state/zoom.ts`) reserves room for the pill (left), real-size card (right) and zoom bar (bottom), and places the sheet either below the measured tool card or right of it plus the pill room, whichever gives the larger fit scale. Floating **zoom bar** bottom centre: −, zoom %, +, "Visa allt", "Verklig storlek". Zoom (`ui/state/zoom.ts`): `zoomPercent(settings, fitScale)` = `100` when `realSize`, else `round(scale / (96 / 25.4) · 100)` with `scale = zoom === 'fit' ? fitScale : zoom` (100 % = real size in CSS mm); + / − compute the new scale from the current effective scale (`zoomBy`, clamp 1–80 px/mm, as today; while `realSize` is on that is the displayed 96/25.4 px/mm, so + from 100 % gives 125 %) and turn `realSize` off; "Visa allt" = `setView('fit', false)`; "Verklig storlek" toggles `realSize` (keeps `zoom`).
+  - Start-row marker: the ladder row is tinted `--ladder` across the sheet, its gutter number bold in `--ink`, and a pill "↗ Börja här" / "Start here" sits left of the sheet on that row (overlay, `aria-hidden`; the row's gutter button is named "Rad {n}, startrad"). It replaces the "S" badge in the editor scene (the editor hides `text.bs-ladder` and passes no `ladderLabel`); `ui.ladderShort` stays because the PDF (`render.ts`) uses it. Gutter buttons still set a manual ladder (click/Enter).
+  - Right panel (one scrolling column): **Färger** (R47), **Går det att sy?** (R48), **Ett örhänge**: tiles for beads (`beadCount`), rows (non-empty rows, R6) and `W×H` mm (rounded to whole mm; the real-size card keeps one decimal via `formatMm`). Tiles use the motif size `analysis.instructions.sizeMm` (as in the PDF meta line) instead of today's canvas size; empty pattern → canvas size. The bottom warnings bar and the canvas status bar ("Stegsöm: rad n (auto)", "Auto") are removed; their content is in R48.
+- R47 Colours. Each palette entry is a radiogroup row (keys 1–9 and arrows as today): bead-look swatch 44 × 36; line 1 the **name** (user name ?? localised seed name, R11; else DB number, else hex); line 2 the DB number (if not already line 1) with "≈" when approximate (tooltip "Ungefärlig färg" / "Approximate colour"); right: count **per pair** (`colourCounts × 2`; header "Färger · antal per par"; the PDF keeps both) and the 1–9 key badge. Selected row: `--accent-soft` + accent border. A pencil button per row (visible on hover/focus, always on touch) opens the existing entry editor (name, hex, remove with replacement) in a popover (sheet on touch). "+ Lägg till färg" (dashed) opens the **picker** (`png/01b-editor-colour-picker.png`): search by name or number ("röd", "723"; existing `colorChoices`), family chips (Alla, Vita & grå, Röda & rosa, Gula & orange, Gröna, Blå & lila, Bruna & beige — `ui/state/colour-family.ts` from Lab: chroma < 12 → white/grey, else hue buckets; no "Metall": the catalogue has no finish data), a swatch grid (catalogue + library; library colours tagged "Mina färger"), a detail row ("Gul · Miyuki Delica DB-721", "Lägg till" = `addColor` and select). The grid is a listbox (arrows move, Enter adds); Escape closes and returns focus to "Lägg till färg".
+- R48 "Går det att sy?" checklist (`ui/state/checklist.ts`: `checklist(pattern, analysis) → ChecklistItem[]`, pure; replaces `WarningsBar`). Header pill: "{n} sak att titta på" / "{n} saker att titta på" (plural pair, `--warn`) or "Går att sy" (`--ok`). Issues are amber cards (alert icon, title, one-line detail with the first affected row number per R6, buttons); passes are lines with a check icon.
+
+  | Item | Source | Issue title (sv) | Detail (sv) | Buttons | Pass line (sv) |
+  |---|---|---|---|---|---|
+  | Start row | `ladderRow`, `pattern.ladder`, `invalidManual` | only if `invalidManual`: "Startraden du valde går inte" | "Appen använder rad {n} i stället." | "Välj åt mig" → `autoLadder` | "Startrad: rad {n} (vald åt dig)" / "(vald av dig)", link "Ändra" (focuses the ladder row's gutter button, hint "Klicka på ett radnummer för att börja där"); when manual also "Välj åt mig" |
+  | `floating` | count | "En pärla sitter löst" / "{n} pärlor sitter löst" | "Rad {r}: pärlan har ingen granne att fästa i." | "Visa" → `cycleWarning('floating')`; "Ta bort den" / "Ta bort dem" → `removeUnsupported` (shaped only; hidden on panels, where it is a no-op) | "Alla pärlor sitter fast" |
+  | `needsExtraLadder` | count | "{n} pärla/pärlor behöver extra stegsöm" | "Rad {r}: sticker ut mer än en halv pärla. Det går att sy – mönstret visar hur." | "Visa" | none |
+  | `thinLine` | chains | "En linje är för tunn" / "{n} linjer är för tunna" | "Rad {r}–{r+value−1}: bara en pärla bred, blir lätt sladdrig." | "Visa" | "Inga för tunna linjer" |
+  | `segments` | rows | "Rad {r} är delad i {value} delar" / "{n} rader är delade" | "Varje del sys för sig." | "Visa" | "Alla rader hänger ihop" |
+  | `panelGaps` | count | "Det finns ett hål i rektangeln" / "{n} hål i rektangeln" | "Rad {r}: tom plats." | "Visa" | none |
+  | Empty | `ladderRow === null` | — | — | — | only "Mönstret är tomt", no pill count |
+
+  English strings are written alongside in the same style (e.g. "1 bead is loose", "Row {r}: the bead has no neighbour to hold on to.", "Remove it"). `{n}` in the pill counts issue items: the start-row issue plus each non-zero code except `segments`, which is listed as an issue card but, like today's ⑂ marker, is informational and not counted. "Visa" keeps today's semantics (cycles occurrences, scrolls to and outlines the cell). Fix buttons are one undo step and announce the result in the panel's polite live region. `checklist()` also feeds the touch chip (R51), the import pill (R53) and the print page's "Åtgärda först" (R54). `EditorStore.requestShowWarning(code)` stores a pending request that the Canvas consumes after it has mounted and measured (so "Visa" runs after navigating back from another view).
+- R49 Real-size pair, always visible: editor card (desktop top-right; tablet compact; phone: the size chip opens it as a sheet), start page and import inset share one component `RealSizePair.svelte` (props: pattern, scene options, box) with title "Verklig storlek" + `W × H mm` (motif size, R46) and two identical copies of the pattern (beads and loop only) in CSS mm as the existing real-size view (OQ15 accuracy unchanged; no calibration link; not mirrored). `ui/state/real-size.ts` `pairLayout(drawnMm, boxMm)` → `pair` | `single` | `none` (copies 6 mm apart, `PAIR_GAP_MM`), applied to the drawn box (beads and loop, `motifBox`) via `drawnLayout(scene, box)`, so the copies never overflow the card; box = usable area inside the card: 54 × 70 mm desktop (mockup card 236 px − padding/borders = 204 px ≈ 54 mm), 40 × 60 mm tablet, sheet width on phone; `none` shows "För stort att visa här" + "Visa i verklig storlek" (existing `realSize`). Collapsible to its title (per session; editor card only, prop `collapsible`, title becomes a disclosure button with `aria-expanded`).
+- R50 Save state. The top-bar pill reflects the **autosave** (localStorage), not the file: "Sparat" (check icon, `--ok-soft`) after a successful write with nothing pending, "Sparar…" while the 500 ms debounce is pending, "Inte sparat" (`--danger-soft`, tooltip = save-error text) after a failed write or while writes are blocked (R16 banner unchanged). `AutosaveController` gains `status: 'saved' | 'pending' | 'error' | 'blocked'` and an `onStatus` callback. The file dirty flag (New confirmation) is unchanged. Banners (load/save/open errors, ring clipped) render as toasts in the canvas toast slot with the same actions.
+- R51 Touch layout (< 1024 px wide; `(pointer: coarse)` at any width only enlarges targets).
+  - **Tablet 600–1023** (`png/05-tablet-portrait.png`): top bar logo, title, save pill, spacer, undo, redo (icons), "Från bild", "Skriv ut" (primary), "···" (Arkiv items, Utseende, language). Canvas fills the rest. Floating: checklist chip top-left ("1 sak att titta på" with alert + chevron icons, or "Går att sy" with check; opens the checklist as a bottom sheet), real-size card top-right, zoom stack bottom-right (+, −, verklig storlek), first-use hint "Måla med ett finger · flytta och zooma med två" (dismissed by tap or the first two-finger gesture; remembered in localStorage as a convenience). **Bottom dock**: row 1 colour strip (swatches 64 × 52 with names, horizontal scroll, "+ Ny färg" opens the picker sheet; right end: "Vit · DB-200", "236 pärlor per par", "Byt eller ändra färg" → entry editor sheet), row 2 tools (icon + label, equal widths). Tapping the active tool opens its options (incl. Ring) as a sheet above the dock.
+  - **Phone < 600** (`png/05b-phone-portrait-dark.png`): top bar "‹" (→ `#/new`), title, undo, redo, print (icon, primary), "···" (Arkiv, Utseende, language, Visa allt). Chip row (horizontal scroll): checklist chip, size chip "W × H mm" (opens the R49 sheet), "Startrad" chip (scrolls the ladder row to the centre). Dock: line "{name} DB-xxx · {n} per par" + hint "Håll in för att byta färg" (long press ≥ 500 ms on a swatch opens its entry editor sheet); swatches without names except the selected one; tools with short labels ("Plocka"). No "Börja här" pill (the "Startrad" chip replaces it), no zoom stack, no hint.
+  - **Sheets** (both touch layouts): checklist, real-size, tool options (the tool card; Ring = R36 options), entry editor and picker are bottom sheets above the dock — `Popover` with `sheet` (also forced under `(pointer: coarse)` at any width): focus first field, Tab trapped, Escape/outside press close and restore focus. "Visa" and "Ändra" in the checklist sheet close it so the canvas shows the result.
+  - **Other views < 1024 px**: start page one column, CTA (and its confirmation) fixed at the bottom; print page panel above the preview, header (with "Ladda ner PDF") sticky; import per R53. Phone (< 600) hides the header back-button labels (kept as accessible names).
+  - **Gestures** (`ui/state/gesture.ts`, pure state machine over pointer events): one touch pointer paints/erases/fills/picks like a mouse; a second touch pointer while the first is down **cancels** the stroke (pattern back to `stroke.before`, no history entry; new `cancelStroke` in `ui/state/editor.ts`) and starts pan/zoom: zoom = distance ratio (clamped 1–80 px/mm, anchored at the midpoint, turns `realSize` off), pan = midpoint delta (viewport scroll). Painting resumes only after all pointers are up. Mouse and pen unchanged, except that a pen press takes over from touches (cancelling their stroke or pinch) and touches are ignored while the pen is down; a mouse press is ignored while anything else is down. Only presses on the pattern itself start a tool (not the viewport padding or scrollbars). The zoom of a pinch or Ctrl/⌘ + wheel is saved once, at the end of the pinch or 300 ms after the last wheel event. Leaving the layout mid-stroke (crossing 1024 px) cancels the stroke. Ring on touch keeps R36 (ghost on press, place on release); a second finger cancels the placement. Canvas `touch-action: none`; the rest of the page scrolls normally. Desktop: Ctrl/⌘ + wheel (trackpad pinch) zooms at the cursor; plain wheel scrolls.
+- R52 Mockup ↔ spec conflicts (owner answers 2026-11-19; all **RESOLVED**):
+  1. Tool letter shortcuts (B/E/F/I badges, `png/01`) contradict R36. RESOLVED: none, no badges.
+  2. "Flytta" (hand) tool. RESOLVED: omitted (scroll/wheel on desktop, two fingers on touch).
+  3. Hjälp, history (clock), "Mina mönster": out of scope; the "Mina mönster" slot becomes the "Arkiv" menu.
+  4. Palette count per pair instead of per earring. RESOLVED: per pair, labelled; the PDF keeps both.
+  5. Import "Så tolkas den / Original" toggle vs R39 press-and-hold. RESOLVED: segmented toggle (sticky radio pair; highlights unchanged; hold and `import.showOriginal` dropped).
+  6. "Konturlinjer: Tjockare ↔ Tunnare" does not match `lineSensitivity` (D5: higher = thin source lines thickened more). RESOLVED: label "Linjer" / "Lines", ends "Tunna linjer kan försvinna" ↔ "Tunna linjer förstärks" ("Thin lines may vanish" ↔ "Thin lines are strengthened"), value = `lineSensitivity`.
+  7. Detail presets. RESOLVED `{lineSensitivity, details}`: Enkel `{0.3, 0}`, Lagom `{0.5, 0.25}`, Detaljerad `{0.8, 0.75}` (`ui/state/presets.ts`). The preset equal to the form is shown selected (none after a manual change). Thumbnails are real previews computed once per visit of step 4 (sequential, idle, cached by settings key, spinner until ready).
+  8. Size presets "Liten / Mellan / Stor" (start page, import). RESOLVED W × H beads: panel 9 × 18 / 11 × 22 / 15 × 30; shaped 15 × 22 / 20 × 28 / 26 × 36 (Mellan = today's defaults; `ui/state/presets.ts`). In import a preset sets the width and `autoSize: 'height'` (R34); "Egen" shows the existing width/height fields with "Auto (från bilden)".
+  9. Print options "Pärllista", "Rad för rad", "Symboler", "Spegelvänt", paper A4/US Letter. RESOLVED: only language and "Bild i verklig storlek"; no thumbnails column.
+  10. "Skriv ut" button. RESOLVED: hidden only when `navigator.pdfViewerEnabled === false` (as in R54); calls `print()` on the preview frame, falls back to opening the PDF blob in a new tab.
+  11. "Ta bort ensamma pärlor · 3 borttagna" needs a count. RESOLVED: new `AnalysisStats.despeckledBeads` (cells changed by despeckle; output otherwise identical, tested). The ring's feature name "(ögat)" is not available and not shown.
+  12. The background hint mentions "Jag pekar ut den" (out of scope); reworded (R53).
+  13. Import header "‹ Tillbaka" and "Avbryt" do the same. RESOLVED: one "‹ Tillbaka till mönstret" (leave without applying); footer "Tillbaka" = previous step.
+  14. Dark mode. RESOLVED (owner): in-app theme choice System / Ljust / Mörkt, default System, persisted (R45).
+  15. Phone "‹" goes to the start page, which offers "Fortsätt med {title}" (R55). Resolved as drawn.
+  16. Import steps 1 (Beskär), 3 (Färger) and 5 (Klart) are not mocked; R53 designs them from existing controls in the style of steps 2 and 4.
+  17. The New dialog's live mm readout for both bead types becomes the start page's readout for the selected bead type only (intended: the other type is one click away).
+- R53 "Mönster från bild" (`#/import`, full screen; `png/02-import-background.png`, `png/02b-import-details.png`; replaces `ImportDialog`). Opened with an `ImportTarget = { source: 'editor' } | { source: 'start'; choice: NewPatternChoice }` (`ui/state/import-wizard.ts`) next to the decoded image. Header: "‹ Tillbaka till mönstret" (R44 leave), title (Fraunces), stepper (5 steps: number or check icon, label; visited steps checked; `nav` with `aria-current="step"`; every step reachable at any time since all have defaults; step 3 label adds "· {n} st" used colours). Body (desktop): picture card | bead-preview card | step panel 400 px with a sticky footer "Tillbaka" + "Nästa: {next step}" (step 5: "Använd mönstret"). Picture card: "Din bild" + segmented "Så tolkas den | Original" (R52.5), `CropView` (R38/R39 unchanged: crop, processed picture, checkerboard, live highlights) with a legend chip while a highlight is active (e.g. "Rosa = tas bort, blir inga pärlor"), footer: file name (+ "· beskuren"), rotate left/right and mirror (R31). Preview card: "Så blir pärlmönstret" + pill from `checklist()` of the merged pattern ("Går att sy" / "{n} saker att titta på"), the bead preview (existing scene, ring outline R37), an inset `RealSizePair` (single copy), and the **size bar**: "Storlek" Liten / Mellan / Stor / Egen (R52.8) + `W × H mm`. Settings are saved on "Använd mönstret" only (R33); preview debounce and caches unchanged (250 ms, thin/details caches, 600 ms idle warm-up).
+  - Initial target: `source: 'editor'` → the current pattern's bead type, mode and size (today). `source: 'start'` → `choice.beadType`, `choice.mode`, `choice.width × choice.height` with `autoSize: null`; the candidate palette is `buildNewPattern(choice).palette` (background + contrast, as a new pattern would have) plus "fler färger" as chosen in step 3; for panels the analysis runs with `panelBackground` = the id of the Grundfärg entry (`choice.background`), for this import only (the saved settings keep `panelBackground: 'auto'`).
+  - Apply: `source: 'editor'` → `applyImport` as today (one undo step). `source: 'start'` → `EditorStore.newFromImport(choice, analysis, target)` (= `startNewPattern` + `applyImport` collapsed into one undo step back to the previous pattern; marks the pattern saved like New, resets ring options and `patternEpoch` like New). Both then leave to the editor (R44).
+
+  | Step | Heading (sv) | Controls → existing setting |
+  |---|---|---|
+  | 1 Beskär | "Vilken del av bilden?" + "Dra en ruta runt motivet. Hoppa över om hela bilden ska med." | crop (R38) incl. keyboard hint and "Återställ beskärning"; rotate/mirror (R31, card footer); "Vad ska det bli?": radio cards Rektangel (`mode: panel`) / Fri form (`mode: shaped`); bead type Delica 11/0 "Vanligast" / 15/0 (`beadType`); all pre-filled from `ImportTarget` |
+  | 2 Bakgrund | "Vad är bakgrund?" + "Bakgrunden tas bort så att bara motivet blir pärlor. Titta på det rosa i bilden." | radio cards: "Hitta bakgrunden åt mig · Bäst för de flesta" (`background: auto`), "Ta bort det ljusa · För teckningar på vitt papper" (`threshold`, invert off), "Behåll hela bilden · Hela rutan fylls med pärlor" (`none`); a fourth read-only card "Eget val: {mode}" is selected when the Fler section below sets `alpha`, `borderKey` or an inverted threshold. Slider "Hur mycket ska tas bort?" "Mindre – behåll mer av motivet" ↔ "Mer": auto/borderKey → `borderKeyTolerance` 2–40 (Mer = higher); threshold → `threshold`, reversed (Mer = lower threshold, since `thresholdMask` keeps pixels darker than `t`). Status line under the slider from the resolved mode (`stats.background`): auto→alpha "Bilden har genomskinlig bakgrund – den tas bort" (slider hidden: tolerance has no effect); auto→borderKey none; auto→none "Ingen enfärgad bakgrund hittades – hela bilden blir pärlor. Dra mot Mer om bakgrunden ändå ska bort." (slider stays visible: the R30 decision depends on `borderKeyTolerance`); `none` chosen: slider hidden. Highlight `edge` (R39). Hint: "Försvinner en del av motivet? Dra reglaget mot Mindre." Collapsed "Fler inställningar · behövs sällan": background mode select (all 5 modes, `import.bg.*`) and "Invertera" (threshold only), each showing its current value |
+  | 3 Färger | "Vilka färger?" + "Appen väljer bland färgerna i ditt mönster." | "Antal färger" stepper 2–8 (`maxColors`, note "inklusive bakgrunden" on panels, R22); list of the candidate base palette (swatch, name, DB) each with switch "Liten men viktig (t.ex. ögon)" (detail flag, R42/§5.4); switch "Får använda fler färger från katalogen" (`includeExtra`); "Används nu": chips of `usedPalette` |
+  | 4 Detaljer | "Hur detaljerat?" + "Välj den som liknar din bild mest. Du kan alltid måla om pärlor efteråt." | presets Enkel/Lagom/Detaljerad (R52.7); "Linjer" slider (`lineSensitivity`, R52.6; highlight `lines`) with "Återställ" (to the selected/last preset); "Små detaljer · ögon, näbb, fjädrar" "Färre" ↔ "Fler" (`details`; highlight `details`); card "Laga automatiskt": "Gör ringar jämna" (`fixRings`; "{n} ring rättad"/"{n} ringar rättade" from `ringsReplaced`, "Inga hittades"), "Ta bort ensamma pärlor" (`despeckle`; "{n} borttagna" from `despeckledBeads`), "Ta bort pärlor som inte går att sy fast" (`autoPrune`, shaped only; from `prunedBeads`); collapsed "Fler inställningar · behövs sällan": Täckning (`coverage`), Marginal (`margin`), Anpassning (`fit`), each showing its current value — the remaining §5.3 engine parameters |
+  | 5 Klart | "Ser det bra ut?" + "Du kan ändra allt i mönstret efteråt." | read-only summary: stats line (`importStatsText`), size, colours, checklist items of the merged pattern (no fix buttons; fixes happen in the editor); primary "Använd mönstret" (disabled while working/invalid/empty, with the reason text) |
+
+  Status texts (`import.working`, `import.failed`, `import.empty`, `import.invalid`) appear in the preview card in a polite live region. Tablet: picture and preview side by side (50/50, max 45 vh), step panel below, footer sticky. Phone: segmented "Bild | Pärlor" switches one view (min 40 vh), compact stepper "Steg 2 av 5 · Bakgrund" with dots, step panel below, sticky footer.
+  - As built (P3): logic in `ui/state/import-wizard.ts` (steps, `applyBlock`, `initialWizard`, `runSettings`/`savedSettings`, size and detail preset helpers, `thumbKey`), `import-settings.ts` (`backgroundChoice`/`backgroundPatch`, `removalSlider`/`removalPatch`), `import-merge.ts` (`wizardBase`, `autoFixReport`), `overlay.ts` (`pictureLegend`, replaces `imageCaption`); runes wrapper `import-wizard.svelte.ts`; components in `components/import/`. The stepper marks visited steps other than the current one as done. For `source: 'start'` the header button reads "‹ Tillbaka" (`ui.back`) and leaves to the start page. Size bar: a preset is selected while `autoSize` is `height` and the width equals its width, or while the size is manual and equals its width and height (e.g. a start-page choice of Mellan); otherwise (or after "Egen" or a field edit) "Egen" with the fields; changing the mode in step 1 keeps a selected preset. From the start page Apply keeps the stored `autoSize` unless the size was changed in the wizard (preset, Auto or a field; `appliedSettings`), since that import starts with `autoSize: null`. The size shown is the merged pattern's motif size (`motifSizeMm`; canvas size before a result). The "Eget val" card appears only while it applies. "Återställ" resets Linjer only, to the last preset chosen (else the default 0.5). Preset thumbnails show the whole lattice (bead shapes only); they are keyed by `thumbKey`, computed one at a time when idle, recomputed only for missing keys when other settings change (pending work cancelled), the cache holds only the current keys, and a failed thumbnail shows "–" instead of a spinner. The "Laga automatiskt" counts show only for switched-on fixes. Step 5 shows the `applyBlock` reason (`import.invalid`, `.working`, `.failed`, `.empty`). The legend chip texts are `wizard.legend.*` (also read by a polite live region); the R39 caption strings `import.caption.*` and `import.showOriginal` are removed with the hold button (R52.5).
+  - Start row in the preview (owner decision): as in the editor, the start row is tinted `--ladder`, the "S" label is not drawn, and a "Börja här" pill (`check.startHere`) points at it from the left (position from `startRowMm`, `ui/state/zoom.ts`). When the preview area is narrower than 400 px (tablet and phone) the pill and the real-size inset are left out so the pattern stays visible; the size bar still shows the mm size.
+- R54 "Skriv ut mönster" (`#/print`, full screen; `png/04-export-pdf.png` minus R52.9 items; replaces `ExportPdfDialog`). Header: "‹ Tillbaka till mönstret", title, pattern-title pill; right: "Skriv ut" (R52.10), "Ladda ner PDF" (primary; existing `exportPdf` + `download`, filename R29). Left panel 380 px: "Språk i mönstret" Svenska | English (default UI locale), "Vad ska vara med?" only "Bild i verklig storlek · Lägg örhänget mot pappret och jämför" (`realSize`, default on), callout "Skriv ut i 100 % · Välj Verklig storlek i skrivarrutan – inte "Anpassa till sida". Mät strecket 10 mm på pappret för att kontrollera.", and when `floating > 0` a card "{n} pärla sitter löst (rad {r})" (alert icon) + "Åtgärda först" (→ `requestShowWarning('floating')`, then leave to the editor, R44/R48). Preview: the real PDF bytes in an `<iframe>` from a blob URL, re-rendered on option change (300 ms debounce; stale results dropped; previous URL revoked; "Uppdaterar…" overlay; render errors shown as today's `banner.exportError`). Without an inline PDF viewer (`navigator.pdfViewerEnabled === false`, e.g. phones) the preview shows a summary card (pages, size) and "Öppna PDF". `ui/state/pdf-preview.ts` holds the debounce/stale/revoke logic (renderer, URL factory and state sink injected; the 300 ms debounce uses `setTimeout`, faked in tests). Download stays possible while a preview renders; leaving drops a result still in flight (R29). Escape does not leave while focus is inside the PDF iframe (the viewer keeps the key); "Skriv ut" is disabled while a render is pending and the old preview stays visible under a render error.
+- R55 "Nytt mönster" start page (`#/new`; `png/03-new-pattern.png` minus Droppe/Romb, coin and saved-pattern list; replaces `NewPatternDialog`). Left column, numbered sections: (1) "Hur vill du börja?" radio cards "Rita själv · Välj form och storlek, måla pärla för pärla" / "Börja från en bild · Appen gör ett första utkast som du kan ändra"; (2) "Form": Rektangel ("Alla rader lika breda – enklast", `panel`) / Fri form ("Börja tomt och forma själv", `shaped`) with lattice illustrations; (3) "Storlek": Liten/Mellan/Stor (R52.8) + sliders "Bredd {mm} mm · {W} pärlor" (2–80) and "Höjd {mm} mm · {H} rader" (1–120), keyboard-operable, mm via `formatMm` for the selected bead type (R52.17); (4) "Pärlor och grundfärg": Delica 11/0 "Vanligast · 1,6 × 1,3 mm per pärla" / 15/0 "1,3 × 1,15 mm – mindre och finare", and for panels "Grundfärg" swatches (existing background choices). Bottom: "Eller fortsätt med": "Fortsätt med {title}" card (shown only when the editor holds a restored or user-made pattern: `editor.hasRealPattern` = autosave restored a pattern or the user edited/opened/created one this session; not for the untouched starter and not after a load error; = leave to the editor) and "Öppna fil…". Right column 430 px: "Så stort blir det" `RealSizePair` (no coin), tiles `W × H mm per örhänge`, rows, "ca {n} pärlor per örhänge" (panel: exact count; shaped: "upp till {n}"), "Bra att veta" (3 notes: start row is chosen for you, every other row is offset half a bead, bead counts are per pair in the PDF), primary CTA "Skapa mönster" or, for "Börja från en bild", "Välj bild" (both with chevron icon).
+  - Confirmation: when `editor.newNeedsConfirm`, pressing the CTA first shows the inline confirmation (today's `ui.confirmReplace` / `ui.confirmOverwriteStored`) above it; only "Ja, ersätt" continues. For "Välj bild" the file picker opens only after that confirmation (the confirming click is the user gesture that opens it). A dropped image or file follows the same order. "Välj bild" → decode → `#/import` with `{ source: 'start', choice }` (R53); cancelling the import returns to the start page with the choices kept (in-memory, per session).
+  - "Öppna fil…" follows the same confirmation order. Sliders step in beads/rows (the mm readout follows the bead type). Grundfärg shows three quick swatches (Vit, Ljus gråblå, Svart) plus a "+" menu with the full seed catalogue. Fri form previews two dashed outlines of the canvas at real size (the empty pattern has no motif to draw); both previews use a 100 × 110 mm box with the R49 pair / single / "För stort" fallback. Switching shape keeps the size tier (Stor stays Stor); a custom size stays. Cancelling the confirmation (Escape, "Tillbaka") returns focus to the CTA; switching "Hur vill du börja?" drops a pending confirmation.
+  - "×" (top right) leaves to the editor (first run: the starter pattern). Phone: one column, CTA sticky.
+- R56 Accessibility. Keyboard: every action reachable without a pointer; logical tab order per view (top bar → rail → canvas → right panel; import: header → picture → preview → step panel → footer); radiogroups (tools, palette, background cards, presets, size presets, segmented controls, theme) use roving tabindex + arrows; menus/popovers/sheets are `<dialog>` or `role="menu"` with focus trap, Escape closes and restores focus to the opener; the canvas keeps R36 keyboard ring placement and gutter row buttons. Focus: visible 2 px `--accent` outline with 2 px offset on every interactive element (`:focus-visible`), never removed. Targets: ≥ 40 × 40 px desktop, ≥ 48 × 48 px under `(pointer: coarse)` and in the touch dock; inline text links ≥ 24 px tall. Contrast: body text ≥ 4.5:1 and large text/UI boundaries ≥ 3:1 in both themes for every token pair used (tested from `app.css`, incl. `--line-strong` on surface and surface-2 and `--ink` on `--ladder`); state is never colour-only (checklist uses icons + text, selection uses border + `aria-checked`). Live regions: save pill, checklist results, import status, ring placement (R36), print preview status (polite). `prefers-reduced-motion`: no sheet/stepper transitions. Every colour is named (palette, picker, dock). `lang` on `<html>` follows the UI locale (as today).
+  - As built (P7): `e2e/a11y.spec.ts` covers route focus on the view `h1`, Escape on print/start/popovers with focus back on the opener, a sheet without fields focusing itself (`Popover`), distinct names for the per-colour detail switches (`aria-labelledby` colour + label) and the colour-code field, and no transitions/animations under reduced motion; `tests/ui/tokens.test.ts` checks every token pair in use (incl. `--accent`/`--warn`/`--ok`/`--danger` text on surfaces, `--muted`/`--ink` on the soft tints and `--paper`, and `--accent` as focus ring on `--bg`/`--surface`/`--surface-2`). The editor's gutter row buttons show focus as an accent stroke and tint (SVG) instead of an outline. Owner decision (P7): `.btn.sm` and `.seg` items are 40 px tall, meeting the desktop target; `e2e/a11y.spec.ts` checks it in the editor and on the print page.
+- R57 i18n and tests for the redesign. Every new string exists in sv and en (key-parity test unchanged); new keys are grouped by prefix (`shell.*`, `theme.*`, `rail.*`, `palette.*`, `check.*`, `size.*`, `start.*`, `wizard.*`, `print.*`, `dock.*`); a phase deletes only keys that its own changes made unused (`ui.ladderShort` stays, PDF). Plural pairs per R15. Unit tests (vitest, `tests/ui`) for every new `ui/state` module; each phase adds its own e2e spec file. `e2e/smoke.spec.ts` is switched once in P1b to stable hooks that every later view must keep — `data-testid` `create-pattern` (New dialog "Create" / start-page CTA), `open-print` (top-bar print button), `pdf-locale` (language control with `data-value` = chosen locale), `download-pdf` (download button) — and is otherwise touched only in P7.
+
+## 14. Milestones (one MR each)
+| # | MR | Depends | Parallel with |
+|---|---|---|---|
+| M0 | Scaffold: Vite+Svelte5+TS, tsconfigs, vitest, lint, hooks + gitleaks, CLAUDE.md, fixtures, SPEC | — | — |
+| M1 | geometry + fixture adapters | M0 | M2–M4 |
+| M2 | palette | M0 | M1, M3, M4 |
+| M3 | i18n | M0 | M1, M2, M4 |
+| M4 | imaging | M0 | M1–M3 |
+| M5 | pattern | M1 | M2–M4 |
+| M6 | feasibility | M5 | M7, M8 |
+| M7 | persist | M5, M2 | M6, M8 |
+| M8 | scene + svg | M5 | M6, M7 |
+| M9 | instructions | M6 | M10 spike |
+| M10 | export-pdf | M8, M9, M3 | M11, M12 |
+| M11 | UI editor shell | M6, M7, M8, M3 | M10, M12 |
+| M12 | analysis | M4, M2, M6 | M10, M11 |
+| M13 | UI feasibility overlay + ladder gutter | M11, M9 | M14 |
+| M14 | UI import dialog | M11, M12 | M13 |
+| M15 | UI export dialog + Playwright smoke | M10, M13 | — |

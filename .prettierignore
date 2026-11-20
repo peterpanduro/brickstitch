@@ -1,0 +1,7 @@
+dist
+node_modules
+coverage
+tests/fixtures
+package-lock.json
+docs
+.claude
