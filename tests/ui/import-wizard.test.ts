@@ -26,6 +26,7 @@ import {
 import {
   backgroundChoice,
   backgroundPatch,
+  removalAutoPatch,
   removalPatch,
   removalSlider,
   settingsToForm,
@@ -167,6 +168,18 @@ describe('removal slider (R53 step 2)', () => {
       expect(s.status).toBeNull();
       expect(removalPatch(s, 30)).toEqual({ borderKeyTolerance: 30 });
     }
+  });
+
+  it('auto: the slider rests at 12 and is marked automatic; a manual value is not', () => {
+    const auto = removalSlider(form(), 'borderKey');
+    expect(auto).toMatchObject({ field: 'borderKeyTolerance', value: 12, auto: true });
+    expect(removalPatch(auto, 20)).toEqual({ borderKeyTolerance: 20 });
+    expect(removalSlider(form({ borderKeyTolerance: 20 }), 'borderKey').auto).toBe(false);
+    expect(removalSlider(form({ background: 'threshold' }), 'threshold').auto).toBe(false);
+  });
+
+  it('automatic patch restores auto', () => {
+    expect(removalAutoPatch).toEqual({ borderKeyTolerance: 'auto' });
   });
 
   it('threshold: reversed, Mer = lower threshold', () => {

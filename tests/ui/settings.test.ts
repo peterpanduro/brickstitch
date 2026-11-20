@@ -31,11 +31,23 @@ describe('theme setting (R45)', () => {
     expect(loadSettings(memory({ settingsVersion: 3, theme: 'sepia' }), 'sv').theme).toBe('system');
   });
 
-  it('saves settingsVersion 3', () => {
+  it('saves settingsVersion 4', () => {
     const store = memory();
     saveSettings(store, loadSettings(store, 'sv'));
-    expect(SETTINGS_VERSION).toBe(3);
-    expect(stored(store).settingsVersion).toBe(3);
+    expect(SETTINGS_VERSION).toBe(4);
+    expect(stored(store).settingsVersion).toBe(4);
+  });
+
+  it('resets a stored border key tolerance to auto before v4 and keeps it from v4 (R59.1)', () => {
+    const analysis = (borderKeyTolerance: unknown) => ({ ...DEFAULT_SETTINGS, borderKeyTolerance });
+    const tol = (v: object) => loadSettings(memory(v), 'sv').analysis.borderKeyTolerance;
+    expect(tol({ analysis: analysis(12) })).toBe('auto');
+    expect(tol({ settingsVersion: 2, analysis: analysis(29) })).toBe('auto');
+    expect(tol({ settingsVersion: 3, analysis: analysis(12) })).toBe('auto');
+    expect(tol({ settingsVersion: 4, analysis: analysis(12) })).toBe(12);
+    expect(tol({ settingsVersion: 4, analysis: analysis(29) })).toBe(29);
+    expect(tol({ settingsVersion: 4, analysis: analysis('auto') })).toBe('auto');
+    expect(tol({ settingsVersion: 4, analysis: analysis('x') })).toBe('auto');
   });
 
   it('migrates fit contain → auto only for unversioned settings, not for v2', () => {

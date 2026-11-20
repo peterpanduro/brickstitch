@@ -112,9 +112,12 @@ describe('floors (today)', () => {
     expect(isBlack(dominantColour(beadsOf('whiteOnWhite', 'tail')) ?? '#ffffff')).toBe(true);
     expect(get('whiteOnWhite-6c').m.beads).toBeGreaterThan(0);
   });
-  it('twoToneBorder: sky and snow keep their colours', { timeout: SLOW }, () => {
-    expect(recall('twoToneBorder', 'sky')).toBeGreaterThan(0.9);
-    expect(recall('twoToneBorder', 'snow')).toBeGreaterThan(0.9);
+  it('twoToneBorder: sky, horizon and snow are keyed out', { timeout: SLOW }, () => {
+    expect(get('twoToneBorder').m.iou).toBeGreaterThan(0.4);
+  });
+  it('whiteOnWhite: the motif survives the background removal', { timeout: SLOW }, () => {
+    expect(get('whiteOnWhite').m.iou).toBeGreaterThan(0.55);
+    expect(get('whiteOnWhite').m.beads).toBeGreaterThan(300);
   });
 });
 
@@ -138,10 +141,10 @@ describe('targets (it.fails until fixed)', () => {
   it.fails('flower: petals are not grey', { timeout: SLOW }, () => {
     expect(shareWhere(beadsOf('flower', 'petals'), isGrey)).toBeLessThan(0.1);
   });
-  it.fails('flower with noise: mask IoU at least 0.97', { timeout: SLOW }, () => {
+  it('flower with noise: mask IoU at least 0.97', { timeout: SLOW }, () => {
     expect(get('flower-noise').m.iou).toBeGreaterThanOrEqual(0.97);
   });
-  it.fails('flower with noise: bead count within 5 % of the clean image', { timeout: SLOW }, () => {
+  it('flower with noise: bead count within 5 % of the clean image', { timeout: SLOW }, () => {
     const clean = get('flower').m.beads;
     expect(Math.abs(get('flower-noise').m.beads - clean) / clean).toBeLessThanOrEqual(0.05);
   });
@@ -159,7 +162,7 @@ describe('targets (it.fails until fixed)', () => {
       expect(shareWhere(t, isBlack)).toBeLessThan(0.03);
     },
   );
-  it.fails('whiteOnWhite: red comb present with 6 colours', { timeout: SLOW }, () => {
+  it('whiteOnWhite: red comb present with 6 colours', { timeout: SLOW }, () => {
     expect(de('whiteOnWhite-6c', 'comb')).toBeLessThan(20);
   });
   it.fails('twoToneBorder: object mask IoU at least 0.85', { timeout: SLOW }, () => {

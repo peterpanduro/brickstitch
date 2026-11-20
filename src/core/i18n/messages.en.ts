@@ -395,6 +395,7 @@ export const en: Messages = {
   'wizard.bg.amount': 'How much should be removed?',
   'wizard.bg.less': 'Less – keep more of the motif',
   'wizard.bg.more': 'More',
+  'wizard.bg.autoAmount': 'Pick the amount automatically',
   'wizard.bg.status.alpha': 'The picture has a transparent background – it is removed',
   'wizard.bg.status.none':
     'No single-colour background was found – the whole picture becomes beads. Drag towards More if the background should still be removed.',

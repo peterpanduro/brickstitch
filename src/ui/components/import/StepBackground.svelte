@@ -3,6 +3,7 @@
   import {
     backgroundChoice,
     backgroundPatch,
+    removalAutoPatch,
     removalPatch,
     removalSlider,
     type BackgroundChoice,
@@ -78,6 +79,18 @@
     highlight="edge"
     onchange={(v) => w.set(removalPatch(slider, v))}
   />
+  {#if slider.field === 'borderKeyTolerance'}
+    <label class="auto">
+      <span>{t('wizard.bg.autoAmount')}</span>
+      <input
+        type="checkbox"
+        class="switch"
+        checked={slider.auto}
+        onchange={(e) =>
+          w.set(e.currentTarget.checked ? removalAutoPatch : removalPatch(slider, slider.value))}
+      />
+    </label>
+  {/if}
 {/if}
 {#if slider.status}
   <p class="status" role="status">{t(slider.status)}</p>
@@ -115,6 +128,14 @@
     margin: -8px 0 0;
     font-size: 13px;
     color: var(--muted);
+  }
+  .auto {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: -4px 0 0;
+    font-size: 13px;
   }
   .note {
     display: flex;

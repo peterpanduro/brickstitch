@@ -395,6 +395,7 @@ export const sv = {
   'wizard.bg.amount': 'Hur mycket ska tas bort?',
   'wizard.bg.less': 'Mindre – behåll mer av motivet',
   'wizard.bg.more': 'Mer',
+  'wizard.bg.autoAmount': 'Välj mängden automatiskt',
   'wizard.bg.status.alpha': 'Bilden har genomskinlig bakgrund – den tas bort',
   'wizard.bg.status.none':
     'Ingen enfärgad bakgrund hittades – hela bilden blir pärlor. Dra mot Mer om bakgrunden ändå ska bort.',

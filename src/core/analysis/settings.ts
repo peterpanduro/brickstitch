@@ -33,8 +33,11 @@ export interface AnalysisSettings {
   readonly threshold: number;
   /** Foreground is lighter than `threshold` instead of darker. */
   readonly thresholdInvert: boolean;
-  /** ΔE2000 tolerance of the border flood fill, 2..40. */
-  readonly borderKeyTolerance: number;
+  /**
+   * ΔE2000 tolerance of the border flood fill, 2..40, or `auto` = derived from the background's
+   * own noise per border colour (R59.1).
+   */
+  readonly borderKeyTolerance: number | 'auto';
   /** Empty beads around the motif, 0..5; `auto` = panel 1, shaped 0. */
   readonly margin: number | 'auto';
   readonly fit: FitMode;
@@ -68,7 +71,7 @@ export const DEFAULT_SETTINGS: AnalysisSettings = {
   background: 'auto',
   threshold: 128,
   thresholdInvert: false,
-  borderKeyTolerance: 12,
+  borderKeyTolerance: 'auto',
   margin: 'auto',
   fit: 'auto',
   supersample: 6,

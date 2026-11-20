@@ -45,6 +45,15 @@ const oneOf = <T extends string | number>(v: unknown, all: readonly T[], fallbac
 
 const bool = (v: unknown, fallback: boolean): boolean => (typeof v === 'boolean' ? v : fallback);
 
+function tolerance(
+  v: unknown,
+  fallback: AnalysisSettings['borderKeyTolerance'],
+): AnalysisSettings['borderKeyTolerance'] {
+  if (v === 'auto') return 'auto';
+  const n = num(v, 2, 40, Number.NaN);
+  return Number.isNaN(n) ? fallback : n;
+}
+
 function margin(v: unknown, fallback: AnalysisSettings['margin']): AnalysisSettings['margin'] {
   if (v === 'auto') return 'auto';
   if (typeof v !== 'number' && typeof v !== 'string') return fallback;
@@ -66,7 +75,7 @@ export function sanitizeAnalysis(
     background: oneOf(v.background, BACKGROUNDS, base.background),
     threshold: num(v.threshold, 0, 255, base.threshold, true),
     thresholdInvert: bool(v.thresholdInvert, base.thresholdInvert),
-    borderKeyTolerance: num(v.borderKeyTolerance, 2, 40, base.borderKeyTolerance),
+    borderKeyTolerance: tolerance(v.borderKeyTolerance, base.borderKeyTolerance),
     margin: margin(v.margin, base.margin),
     fit: oneOf(v.fit, FITS, base.fit),
     coverage: num(v.coverage, 0.3, 0.7, base.coverage),
@@ -158,8 +167,13 @@ export interface RemovalSlider {
   readonly value: number;
   /** Mer = a lower field value (threshold, not inverted: `thresholdMask` keeps darker pixels). */
   readonly reversed: boolean;
+  /** The tolerance is automatic (R59.1): the slider rests at 12 and moving it makes it manual. */
+  readonly auto: boolean;
   readonly status: MessageKey | null;
 }
+
+/** Slider position shown while the tolerance is automatic. */
+const REST_TOLERANCE = 12;
 
 /**
  * Removal slider for the form and the mode the last analysis resolved to (`null` before a
@@ -176,6 +190,7 @@ export function removalSlider(f: ImportForm, resolved: ResolvedBackground | null
       max: 255,
       value: reversed ? 255 - f.threshold : f.threshold,
       reversed,
+      auto: false,
       status: null,
     };
   }
@@ -191,8 +206,9 @@ export function removalSlider(f: ImportForm, resolved: ResolvedBackground | null
     field: 'borderKeyTolerance',
     min: 2,
     max: 40,
-    value: f.borderKeyTolerance,
+    value: f.borderKeyTolerance === 'auto' ? REST_TOLERANCE : f.borderKeyTolerance,
     reversed: false,
+    auto: f.borderKeyTolerance === 'auto',
     status,
   };
 }
@@ -201,3 +217,6 @@ export function removalSlider(f: ImportForm, resolved: ResolvedBackground | null
 export const removalPatch = (s: RemovalSlider, pos: number): Partial<ImportForm> => ({
   [s.field]: s.reversed ? s.min + s.max - pos : pos,
 });
+
+/** Form patch handing the tolerance back to the automatic choice (R59.1). */
+export const removalAutoPatch: Partial<ImportForm> = { borderKeyTolerance: 'auto' };

@@ -1,5 +1,13 @@
 import { alphaMask, thresholdMask } from '../imaging/foreground';
-import { borderKeyMask, borderShare, dominantBorderColour } from '../imaging/borderKey';
+import {
+  adaptiveKey,
+  borderSeeds,
+  floodKeyMask,
+  keysConnected,
+  type BorderSeed,
+  type KeySeed,
+} from '../imaging/borderKey';
+import { removeSpecks } from '../imaging/specks';
 import { createMask } from '../imaging/mask';
 import { flipImage, rotateImage, type QuarterTurns } from '../imaging/orient';
 import { resampleBox } from '../imaging/resample';
@@ -52,34 +60,55 @@ export function prefersAlpha(img: RgbaImage): boolean {
   return n > 0 && n >= AUTO_ALPHA_SHARE * img.width * img.height;
 }
 
-/** Minimum share of border pixels near the dominant border colour for `auto` to key it. */
+/** Minimum share of border pixels in seed colour clusters for `auto` to key the border. */
 export const AUTO_BORDER_SHARE = 0.8;
 
+/** Foreground components smaller than this share of the largest one are removed after keying. */
+export const SPECK_RATIO = 0.01;
+
+/** Flood limits per seed: derived from the background's noise (`auto`) or a flat manual cap. */
+function keySeeds(
+  img: RgbaImage,
+  tolerance: AnalysisSettings['borderKeyTolerance'],
+): (BorderSeed & KeySeed)[] {
+  return borderSeeds(img, deltaRgb).map((s) =>
+    tolerance === 'auto'
+      ? { ...s, ...adaptiveKey(s.noise) }
+      : { ...s, step: Infinity, cap: tolerance },
+  );
+}
+
 /**
- * Foreground mask per `settings.background` (R20, R30): `auto` = alpha when >= 0.5 % of pixels
- * have α < 128; else borderKey when >= {@link AUTO_BORDER_SHARE} of the border is within the
- * tolerance of the dominant border colour; else none (full-bleed image). borderKey is seeded with
- * the dominant border colour.
+ * Foreground mask per `settings.background` (R20, R30, R59.1): `auto` = alpha when >= 0.5 % of
+ * pixels have α < 128; else borderKey when >= {@link AUTO_BORDER_SHARE} of the border lies in
+ * border colour seed clusters and the keyed background joins all seeds; else none (full-bleed
+ * image). borderKey seeds from every substantial border colour cluster and drops foreground specks
+ * ({@link SPECK_RATIO}).
  */
 export function foregroundMask(
   img: RgbaImage,
   s: AnalysisSettings,
 ): { mask: Mask; mode: ResolvedBackground } {
-  const seed = dominantBorderColour(img);
-  const tol = s.borderKeyTolerance;
+  let seedsMemo: ReturnType<typeof keySeeds> | null = null;
+  let floodMemo: Mask | null = null;
+  const seeds = () => (seedsMemo ??= keySeeds(img, s.borderKeyTolerance));
+  const flood = () => (floodMemo ??= floodKeyMask(img, deltaRgb, seeds()));
+  const keysBorder = (): boolean =>
+    seeds().reduce((n, k) => n + k.share, 0) >= AUTO_BORDER_SHARE &&
+    keysConnected(img, deltaRgb, flood(), seeds());
   const mode: ResolvedBackground =
     s.background !== 'auto'
       ? s.background
       : prefersAlpha(img)
         ? 'alpha'
-        : seed && borderShare(img, seed, deltaRgb, tol) >= AUTO_BORDER_SHARE
+        : keysBorder()
           ? 'borderKey'
           : 'none';
   switch (mode) {
     case 'alpha':
       return { mask: alphaMask(img, ALPHA_FG), mode };
     case 'borderKey':
-      return { mask: borderKeyMask(img, deltaRgb, tol, seed), mode };
+      return { mask: removeSpecks(flood(), SPECK_RATIO), mode };
     case 'threshold':
       return { mask: thresholdMask(img, s.threshold, s.thresholdInvert), mode };
     case 'none': {

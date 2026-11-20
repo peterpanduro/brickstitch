@@ -3,7 +3,19 @@ export { createMask, invert, maskCount, union } from './mask';
 export { resampleBox, resampleNearest } from './resample';
 export { median3 } from './median';
 export { alphaMask, hasTransparency, thresholdMask } from './foreground';
-export { borderKeyMask, borderShare, dominantBorderColour } from './borderKey';
+export {
+  SEED_MIN_SHARE,
+  adaptiveKey,
+  borderKeyMask,
+  borderSeeds,
+  borderShare,
+  dominantBorderColour,
+  floodKeyMask,
+  keysConnected,
+  type BorderSeed,
+  type KeySeed,
+} from './borderKey';
+export { removeSpecks } from './specks';
 export { flipImage, rotateImage, type QuarterTurns } from './orient';
 export { boundingBox, cropImage, cropMask } from './crop';
 export { edt } from './edt';

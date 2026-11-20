@@ -94,6 +94,15 @@ describe('settings <-> form', () => {
     expect(DEFAULT_SETTINGS.details).toBe(0);
   });
 
+  it('keeps auto and clamps a manual border key tolerance', () => {
+    expect(DEFAULT_SETTINGS.borderKeyTolerance).toBe('auto');
+    expect(sanitizeAnalysis({ borderKeyTolerance: 'auto' }).borderKeyTolerance).toBe('auto');
+    expect(sanitizeAnalysis({ borderKeyTolerance: 99 }).borderKeyTolerance).toBe(40);
+    expect(sanitizeAnalysis({ borderKeyTolerance: '7' }).borderKeyTolerance).toBe(7);
+    expect(sanitizeAnalysis({ borderKeyTolerance: null }).borderKeyTolerance).toBe('auto');
+    expect(settingsToForm(DEFAULT_SETTINGS).borderKeyTolerance).toBe('auto');
+  });
+
   it('validates the target size', () => {
     const target = { beadType: 'delica11', mode: 'shaped', width: 6, height: 8 } as const;
     expect(validTarget({ ...target, width: 1 })).toBe(false);
@@ -129,7 +138,7 @@ describe('persistence', () => {
     const r = loadSettings(store, 'sv');
     expect([r.analysis.fit, r.analysis.maxColors, r.analysisApplied]).toEqual(['auto', 6, true]);
     saveSettings(store, { ...r, analysis: { ...r.analysis, fit: 'contain' } });
-    expect(JSON.parse(store.m.get(SETTINGS_KEY) ?? '{}').settingsVersion).toBe(3);
+    expect(JSON.parse(store.m.get(SETTINGS_KEY) ?? '{}').settingsVersion).toBe(4);
     expect(loadSettings(store, 'sv').analysis.fit).toBe('contain');
   });
 

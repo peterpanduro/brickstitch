@@ -11,9 +11,10 @@ export const SETTINGS_KEY = 'bs:v1:settings';
 
 /**
  * Stored settings format: 1 unversioned (gets `fit: contain` → `auto` once), 2 adds the
- * version, 3 adds `theme` (SPEC R45).
+ * version, 3 adds `theme` (SPEC R45), 4 makes `analysis.borderKeyTolerance` `auto`-capable (R59.1;
+ * numbers stored before it are dropped).
  */
-export const SETTINGS_VERSION = 3;
+export const SETTINGS_VERSION = 4;
 
 /** Colour theme choice (SPEC R45); `system` follows `prefers-color-scheme`. */
 export type Theme = 'system' | 'light' | 'dark';
@@ -47,7 +48,7 @@ const zoomOf = (v: unknown): Zoom =>
 /**
  * Reads settings; missing or invalid values use defaults (`fallback` locale, fit, not real size,
  * default analysis, `system` theme). Unversioned settings migrate a stored `fit: contain` to
- * `auto`.
+ * `auto`; settings older than version 4 reset `borderKeyTolerance` to `auto`.
  */
 export function loadSettings(store: KeyValueStore, fallback: Locale): Settings {
   let v: Record<string, unknown> = {};
@@ -59,8 +60,11 @@ export function loadSettings(store: KeyValueStore, fallback: Locale): Settings {
   }
   const stored = typeof v.analysis === 'object' && v.analysis !== null;
   const raw = stored ? (v.analysis as Record<string, unknown>) : undefined;
-  const migrated =
-    raw && v.settingsVersion === undefined && raw.fit === 'contain' ? { ...raw, fit: 'auto' } : raw;
+  const version = typeof v.settingsVersion === 'number' ? v.settingsVersion : 1;
+  let migrated = raw;
+  if (migrated && v.settingsVersion === undefined && migrated.fit === 'contain')
+    migrated = { ...migrated, fit: 'auto' };
+  if (migrated && version < 4) migrated = { ...migrated, borderKeyTolerance: 'auto' };
   return {
     locale: LOCALES.includes(v.locale as Locale) ? (v.locale as Locale) : fallback,
     zoom: zoomOf(v.zoom),
