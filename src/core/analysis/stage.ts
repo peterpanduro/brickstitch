@@ -72,7 +72,7 @@ export function prepareStage(
   const nearest = makeNearest(labs);
   const work = orientImage(guardSize(img), settings);
   lap('resample');
-  const { mask, mode } = foregroundMask(work, settings);
+  const { mask, mode } = foregroundMask(work, settings, target.width * target.height);
   const fitMode = resolveFit(settings.fit, mode);
   const margin = resolveMargin(settings, target.mode, fitMode);
   lap('mask');

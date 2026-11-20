@@ -1,6 +1,6 @@
 export type { Box, ColorDistance, Mask, RgbaImage } from './types';
 export { createMask, invert, maskCount, union } from './mask';
-export { resampleBox, resampleNearest } from './resample';
+export { resampleBox, resampleNearest, shrinkToSide } from './resample';
 export { median3 } from './median';
 export { alphaMask, hasTransparency, thresholdMask } from './foreground';
 export {
@@ -10,11 +10,10 @@ export {
   borderSeeds,
   borderShare,
   dominantBorderColour,
-  floodKeyMask,
-  keysConnected,
   type BorderSeed,
   type KeySeed,
 } from './borderKey';
+export { FRINGE_PX, floodSeed, keyedMask, planKeying, type KeyPlan } from './keying';
 export { removeSpecks } from './specks';
 export { flipImage, rotateImage, type QuarterTurns } from './orient';
 export { boundingBox, cropImage, cropMask } from './crop';

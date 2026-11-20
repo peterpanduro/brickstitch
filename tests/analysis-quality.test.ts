@@ -43,6 +43,7 @@ const defs: Record<string, () => [images.QualityImage, AnalysisTarget, Partial<A
     whiteOnWhite: () => [images.whiteOnWhite(), shaped(30, 30), {}],
     'whiteOnWhite-6c': () => [images.whiteOnWhite(), shaped(30, 30), { maxColors: 6 }],
     twoToneBorder: () => [images.twoToneBorder(), shaped(30, 30), {}],
+    hazyBeach: () => [images.hazyBeach(), panel(40, 30), { maxColors: 5 }],
   };
 
 function get(name: string): Case {
@@ -112,13 +113,24 @@ describe('floors (today)', () => {
     expect(isBlack(dominantColour(beadsOf('whiteOnWhite', 'tail')) ?? '#ffffff')).toBe(true);
     expect(get('whiteOnWhite-6c').m.beads).toBeGreaterThan(0);
   });
-  it('twoToneBorder: sky, horizon and snow are keyed out', { timeout: SLOW }, () => {
-    expect(get('twoToneBorder').m.iou).toBeGreaterThan(0.4);
+  it('twoToneBorder: sky and snow keep their colours', { timeout: SLOW }, () => {
+    expect(recall('twoToneBorder', 'sky')).toBeGreaterThan(0.9);
+    expect(recall('twoToneBorder', 'snow')).toBeGreaterThan(0.9);
   });
   it('whiteOnWhite: the motif survives the background removal', { timeout: SLOW }, () => {
     expect(get('whiteOnWhite').m.iou).toBeGreaterThan(0.55);
     expect(get('whiteOnWhite').m.beads).toBeGreaterThan(300);
   });
+});
+
+describe('full-bleed photos are not keyed away (R59.1)', () => {
+  it(
+    'hazyBeach: soft sky, sea and sand transitions keep the whole picture',
+    { timeout: SLOW },
+    () => {
+      expect(get('hazyBeach').m.iou).toBeGreaterThan(0.95);
+    },
+  );
 });
 
 describe('targets (it.fails until fixed)', () => {
@@ -151,7 +163,7 @@ describe('targets (it.fails until fixed)', () => {
   it.fails('whiteOnWhite: mask IoU at least 0.95 at default settings', { timeout: SLOW }, () => {
     expect(get('whiteOnWhite').m.iou).toBeGreaterThanOrEqual(0.95);
   });
-  it.fails(
+  it(
     'whiteOnWhite: no black beads on the body and head beyond true dark features',
     { timeout: SLOW },
     () => {

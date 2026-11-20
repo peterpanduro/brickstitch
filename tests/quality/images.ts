@@ -213,3 +213,32 @@ export function twoToneBorder(): QualityImage {
   });
   return { ...r, regions: ['sky', 'snow', 'object'], fg: [2], enclosing: [-1, -1, 0] };
 }
+
+const smooth = (t: number): number => {
+  const u = Math.min(1, Math.max(0, t));
+  return u * u * (3 - 2 * u);
+};
+
+/**
+ * Hazy full-bleed photo: pale sky, sea and sand with soft transitions and a faint sun glow; the
+ * whole picture is motif (no background to remove).
+ */
+export function hazyBeach(noise = 2): QualityImage {
+  const r = render(
+    480,
+    360,
+    (x, y) => {
+      const sky = mix([170, 200, 235], [215, 228, 240], y / 150);
+      const sea = mix([95, 145, 175], [130, 165, 190], (y - 150) / 90);
+      const sand = mix([228, 212, 178], [214, 196, 160], (y - 250) / 110);
+      const glow = Math.max(0, 1 - Math.hypot(x - 330, y - 90) / 90) * 0.35;
+      const top = mix(sky, [255, 250, 235], glow);
+      const toSea = smooth((y - 150) / 24);
+      const toSand = smooth((y - 250) / 24);
+      const upper = mix(top, sea, toSea);
+      return [mix(upper, sand, toSand), y < 162 ? 0 : y < 262 ? 1 : 2];
+    },
+    noise,
+  );
+  return { ...r, regions: ['sky', 'sea', 'sand'], fg: [0, 1, 2], enclosing: [-1, -1, -1] };
+}

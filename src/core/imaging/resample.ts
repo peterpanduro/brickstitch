@@ -58,3 +58,38 @@ export function resampleBox(img: RgbaImage, width: number, height: number): Rgba
   }
   return { width, height, data: out };
 }
+
+/**
+ * Cheap downscale by the smallest integer factor that brings the long side to at most `side`:
+ * the mean of each k×k block (edge remainders dropped). Returns `img` itself when it already fits.
+ */
+export function shrinkToSide(img: RgbaImage, side: number): RgbaImage {
+  const k = Math.ceil(Math.max(img.width, img.height) / side);
+  if (k <= 1) return img;
+  const width = Math.max(1, Math.floor(img.width / k));
+  const height = Math.max(1, Math.floor(img.height / k));
+  const out = new Uint8ClampedArray(width * height * 4);
+  const kk = k * k;
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      for (let j = 0; j < k; j++) {
+        let i = ((y * k + j) * img.width + x * k) * 4;
+        for (let m = 0; m < k; m++, i += 4) {
+          r += img.data[i]!;
+          g += img.data[i + 1]!;
+          b += img.data[i + 2]!;
+          a += img.data[i + 3]!;
+        }
+      }
+      const o = (y * width + x) * 4;
+      out[o] = r / kk;
+      out[o + 1] = g / kk;
+      out[o + 2] = b / kk;
+      out[o + 3] = a / kk;
+    }
+  return { width, height, data: out };
+}

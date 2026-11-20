@@ -27,12 +27,14 @@ const noise = (x: number, y: number): number => {
 const SKY: Rgb = [90, 150, 225];
 const SNOW: Rgb = [250, 250, 252];
 const BIRD: Rgb = [200, 60, 60];
+const inBox = (x: number, y: number, lo: number, hi: number) =>
+  x >= lo && x < hi && y >= lo && y < hi;
 const inBird = (x: number, y: number) => Math.hypot(x - 100, y - 90) < 30;
 
 describe('foregroundMask background removal (R59.1)', () => {
   it('auto keys sky over a soft horizon over snow, keeping the motif', () => {
     const img = image(200, 200, (x, y) =>
-      inBird(x, y) ? BIRD : mix(SKY, SNOW, Math.min(1, Math.max(0, (y - 110) / 40))),
+      inBird(x, y) ? BIRD : mix(SKY, SNOW, Math.min(1, Math.max(0, (y - 110) / 10))),
     );
     const { mask, mode } = foregroundMask(img, DEFAULT_SETTINGS);
     expect(mode).toBe('borderKey');
@@ -78,5 +80,50 @@ describe('foregroundMask background removal (R59.1)', () => {
       maskCount(foregroundMask(img, { ...DEFAULT_SETTINGS, borderKeyTolerance }).mask);
     expect(manual(2)).toBeGreaterThan(1000);
     expect(manual(40)).toBe(0);
+  });
+
+  it('keeps a 40 px icon on a 2048 px quiet white canvas', () => {
+    const img = image(2048, 2048, (x, y) =>
+      inBox(x, y, 1000, 1040) ? [30, 80, 160] : [255, 255, 255],
+    );
+    const { mask, mode } = foregroundMask(img, DEFAULT_SETTINGS);
+    expect(mode).toBe('borderKey');
+    expect(maskCount(mask)).toBeGreaterThan(1500);
+  });
+
+  it('keeps a small motif on a noisy background when it is wide enough', () => {
+    const img = image(512, 512, (x, y) => {
+      const n = noise(x, y) * 9;
+      return Math.hypot(x - 256, y - 256) < 14
+        ? [BIRD[0] + n, BIRD[1] + n, BIRD[2] + n]
+        : [200 + n, 215 + n, 240 + n];
+    });
+    expect(foregroundMask(img, DEFAULT_SETTINGS).mode).toBe('borderKey');
+  });
+
+  it('falls back to none when a noisy background leaves only a sliver', () => {
+    const img = image(400, 400, (x, y) => {
+      const n = noise(x, y) * 9;
+      return x > 200 && x < 203 && y > 80 && y < 320
+        ? [120 + n, 140 + n, 180 + n]
+        : [200 + n, 215 + n, 240 + n];
+    });
+    expect(foregroundMask(img, DEFAULT_SETTINGS).mode).toBe('none');
+  });
+
+  it('keeps a thin line drawing on a quiet background', () => {
+    const img = image(400, 400, (x, y) => (Math.abs(x - y) < 1 ? [0, 0, 0] : [255, 255, 255]));
+    expect(foregroundMask(img, DEFAULT_SETTINGS).mode).toBe('borderKey');
+  });
+
+  it('keeps a detached dot that fills a bead, drops one smaller than a bead', () => {
+    const img = image(400, 400, (x, y) =>
+      inBird(x, y) || inBox(x, y, 20, 24) || (x === 380 && y === 10) ? BIRD : SNOW,
+    );
+    const alone = foregroundMask(img, DEFAULT_SETTINGS);
+    expect(alone.mask.data[22 * 400 + 22]).toBe(0);
+    const beaded = foregroundMask(img, DEFAULT_SETTINGS, 30 * 34);
+    expect(beaded.mask.data[22 * 400 + 22]).toBe(1);
+    expect(beaded.mask.data[10 * 400 + 380]).toBe(0);
   });
 });

@@ -1,16 +1,11 @@
 import { alphaMask, thresholdMask } from '../imaging/foreground';
-import {
-  adaptiveKey,
-  borderSeeds,
-  floodKeyMask,
-  keysConnected,
-  type BorderSeed,
-  type KeySeed,
-} from '../imaging/borderKey';
+import { adaptiveKey, borderSeeds, type BorderSeed, type KeySeed } from '../imaging/borderKey';
+import { keyedMask, planKeying } from '../imaging/keying';
+import { edt } from '../imaging/edt';
 import { removeSpecks } from '../imaging/specks';
-import { createMask } from '../imaging/mask';
+import { createMask, invert, maskCount } from '../imaging/mask';
 import { flipImage, rotateImage, type QuarterTurns } from '../imaging/orient';
-import { resampleBox } from '../imaging/resample';
+import { resampleBox, shrinkToSide } from '../imaging/resample';
 import type { Box, Mask, RgbaImage } from '../imaging/types';
 import { rgbToLab } from '../palette/color';
 import { deltaE2000, nearestIndex } from '../palette/deltaE';
@@ -66,6 +61,15 @@ export const AUTO_BORDER_SHARE = 0.8;
 /** Foreground components smaller than this share of the largest one are removed after keying. */
 export const SPECK_RATIO = 0.01;
 
+/** Longest side of the picture the border key is planned on (R59.1). */
+export const KEY_PLAN_SIDE = 512;
+
+/** `auto` keeps borderKey only when the foreground's largest inscribed circle is this wide (radius, share of the short side). */
+export const MIN_INRADIUS = 0.008;
+
+/** Largest cap of a single border colour that counts as a quiet background the key is trusted on. */
+export const QUIET_CAP = 3;
+
 /** Flood limits per seed: derived from the background's noise (`auto`) or a flat manual cap. */
 function keySeeds(
   img: RgbaImage,
@@ -78,45 +82,63 @@ function keySeeds(
   );
 }
 
+/** Whether a keyed foreground is a plausible motif: empty, or not just slivers. */
+function plausible(fg: Mask): boolean {
+  if (maskCount(fg) === 0) return true;
+  const d = edt(invert(fg));
+  let inner = 0;
+  for (let p = 0; p < d.length; p++) if (fg.data[p] && d[p]! > inner) inner = d[p]!;
+  return Math.sqrt(inner) >= MIN_INRADIUS * Math.min(fg.width, fg.height);
+}
+
 /**
  * Foreground mask per `settings.background` (R20, R30, R59.1): `auto` = alpha when >= 0.5 % of
  * pixels have α < 128; else borderKey when >= {@link AUTO_BORDER_SHARE} of the border lies in
- * border colour seed clusters and the keyed background joins all seeds; else none (full-bleed
- * image). borderKey seeds from every substantial border colour cluster and drops foreground specks
- * ({@link SPECK_RATIO}).
+ * border colour seed clusters that join through the keyed background and the result is a
+ * plausible motif ({@link plausible}, not asked of a single quiet background colour, whose
+ * thin line drawings are legitimate); else none (full-bleed image). borderKey is planned on a
+ * picture of at most {@link KEY_PLAN_SIDE} px, seeds from every substantial border colour
+ * cluster, and drops foreground specks smaller than both {@link SPECK_RATIO} of the largest part
+ * and one bead (`beads` = lattice size in beads, 0 = ignore).
  */
 export function foregroundMask(
   img: RgbaImage,
   s: AnalysisSettings,
+  beads = 0,
 ): { mask: Mask; mode: ResolvedBackground } {
-  let seedsMemo: ReturnType<typeof keySeeds> | null = null;
-  let floodMemo: Mask | null = null;
-  const seeds = () => (seedsMemo ??= keySeeds(img, s.borderKeyTolerance));
-  const flood = () => (floodMemo ??= floodKeyMask(img, deltaRgb, seeds()));
-  const keysBorder = (): boolean =>
-    seeds().reduce((n, k) => n + k.share, 0) >= AUTO_BORDER_SHARE &&
-    keysConnected(img, deltaRgb, flood(), seeds());
-  const mode: ResolvedBackground =
-    s.background !== 'auto'
-      ? s.background
-      : prefersAlpha(img)
-        ? 'alpha'
-        : keysBorder()
-          ? 'borderKey'
-          : 'none';
-  switch (mode) {
-    case 'alpha':
-      return { mask: alphaMask(img, ALPHA_FG), mode };
-    case 'borderKey':
-      return { mask: removeSpecks(flood(), SPECK_RATIO), mode };
-    case 'threshold':
-      return { mask: thresholdMask(img, s.threshold, s.thresholdInvert), mode };
-    case 'none': {
-      const mask = createMask(img.width, img.height);
-      mask.data.fill(1);
-      return { mask, mode };
-    }
-  }
+  const wholeImage = (mode: 'none' | 'borderKey') => {
+    const mask = createMask(img.width, img.height);
+    mask.data.fill(1);
+    return { mask, mode };
+  };
+  if (s.background === 'alpha' || (s.background === 'auto' && prefersAlpha(img)))
+    return { mask: alphaMask(img, ALPHA_FG), mode: 'alpha' };
+  if (s.background === 'threshold')
+    return { mask: thresholdMask(img, s.threshold, s.thresholdInvert), mode: 'threshold' };
+  if (s.background === 'none') return wholeImage('none');
+  const auto = s.background === 'auto';
+  const seeds = keySeeds(img, s.borderKeyTolerance);
+  if (seeds.length === 0) return wholeImage(auto ? 'none' : 'borderKey');
+  const small = shrinkToSide(img, KEY_PLAN_SIDE);
+  const plan = planKeying(small, deltaRgb, seeds);
+  const planned = removeSpecks(
+    { width: small.width, height: small.height, data: plan.background.map((v) => v ^ 1) },
+    SPECK_RATIO,
+    beads,
+  );
+  const covered = plan.used.reduce((n, k) => n + k.share, 0);
+  const quiet = plan.used.length === 1 && plan.used[0]!.cap <= QUIET_CAP;
+  if (auto && (covered < AUTO_BORDER_SHARE || (!quiet && !plausible(planned))))
+    return wholeImage('none');
+  const mask =
+    small === img
+      ? planned
+      : removeSpecks(
+          keyedMask(img, deltaRgb, plan.used, { ...small, data: plan.bridge }),
+          SPECK_RATIO,
+          beads,
+        );
+  return { mask, mode: 'borderKey' };
 }
 
 /** Nearest palette index for an RGB pixel, cached per distinct 24-bit colour. */

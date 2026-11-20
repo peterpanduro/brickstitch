@@ -17,6 +17,7 @@ import {
   median3,
   resampleBox,
   resampleNearest,
+  shrinkToSide,
   thickenSkeleton,
   thresholdMask,
   union,
@@ -356,5 +357,19 @@ describe.skipIf(!import.meta.env['VITE_PERF'])('perf 2048x2048 (VITE_PERF=1)', (
     const ed = performance.now() - t0;
     console.log(`PERF zhangSuen=${zs.toFixed(0)}ms edt=${ed.toFixed(0)}ms`);
     expect(zs).toBeGreaterThan(0);
+  });
+});
+
+describe('shrinkToSide', () => {
+  it('averages k×k blocks with the smallest integer factor that fits', () => {
+    const img = image(8, 4, (x) => (x < 4 ? [0, 0, 0, 255] : [200, 100, 50, 255]));
+    const out = shrinkToSide(img, 4);
+    expect([out.width, out.height]).toEqual([4, 2]);
+    expect(Array.from(out.data.slice(0, 4))).toEqual([0, 0, 0, 255]);
+    expect(Array.from(out.data.slice(12, 16))).toEqual([200, 100, 50, 255]);
+  });
+  it('returns the image itself when it already fits', () => {
+    const img = image(4, 4, () => [1, 2, 3, 255]);
+    expect(shrinkToSide(img, 4)).toBe(img);
   });
 });
