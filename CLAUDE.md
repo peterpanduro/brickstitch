@@ -55,6 +55,8 @@ Dependency direction: `ui -> export-pdf -> core`, `ui -> core`. Enforced by `tsc
   be free). Needs `npx playwright install chromium`,
   or `PW_CHANNEL=chrome npm run e2e` to use an installed Chrome.
 - `npm install` sets `core.hooksPath=.githooks`; gitleaks must be installed (`brew install gitleaks`).
+- CI: `.github/workflows/pages.yml` runs check, lint, prettier, test, e2e and build on every push and PR;
+  pushes to `main` deploy `dist/` to GitHub Pages. Actions are pinned by commit SHA.
 
 ## Conventions
 
