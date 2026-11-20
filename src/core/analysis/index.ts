@@ -14,6 +14,7 @@ export type { ResolvedBackground } from './prepare';
 export {
   analyseImage,
   type AnalyseDeps,
+  type AnalysisColourMatch,
   type AnalysisRing,
   type AnalysisStats,
   type ImageAnalysis,

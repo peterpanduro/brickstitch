@@ -1,9 +1,11 @@
 import {
   DEFAULT_SETTINGS,
   type AnalysisSettings,
+  type AnalysisColourMatch,
   type AutoSize,
   type BeadTypeId,
   type MessageKey,
+  type PaletteEntry,
   type Pattern,
   type PatternMode,
 } from '../../core';
@@ -95,6 +97,24 @@ export function colourCount(maxColors: number, candidates: number): ColourCount 
   const max = Math.min(8, candidates);
   return { shown: Math.min(maxColors, max), max, limited: candidates < maxColors };
 }
+
+/** ΔE2000 beyond which a used colour is a poor stand-in for a colour of the picture (R59.5). */
+export const POOR_MATCH_DE = 15;
+const POOR_MATCH_SHARE = 0.005;
+
+/**
+ * Used colours that stand in for a colour of the picture more than {@link POOR_MATCH_DE} away
+ * (clusters under 0.5 % are ignored), each once, in palette order (SPEC R59.5).
+ */
+export const poorMatches = (
+  matches: readonly AnalysisColourMatch[],
+  used: readonly PaletteEntry[],
+): PaletteEntry[] =>
+  used.filter((e) =>
+    matches.some(
+      (m) => m.colorId === e.id && m.deltaE > POOR_MATCH_DE && m.share >= POOR_MATCH_SHARE,
+    ),
+  );
 
 /** Whether the stepper shows `step` as done: visited and not the current step. */
 export const stepDone = (s: StepState, step: WizardStep): boolean =>

@@ -1,6 +1,7 @@
-import { deltaE2000, nearestIndex } from '../palette/deltaE';
 import type { Lab } from '../palette/types';
+import { deltaE2000 } from '../palette/deltaE';
 import { clusterColours } from './cluster';
+import { matchEntry } from './match';
 import type { NearestFn } from './prepare';
 
 /** Share of the foreground below which a detail colour is no longer kept as its own colour. */
@@ -86,7 +87,7 @@ export interface ReduceInput {
 /**
  * Palette reduction (SPEC R59.3): the foreground colours are clustered in Lab down to
  * `maxColors` (Ward merging, see {@link clusterColours}), then each cluster gets its nearest
- * palette entry (ΔE2000); clusters landing on one entry merge. Only flat pixels (not on an
+ * palette entry (ΔE2000, hue-preserving: see {@link matchEntry}); clusters landing on one entry merge. Only flat pixels (not on an
  * anti-aliased edge) form clusters; the others join the nearest cluster. Pixels nearest to a detail
  * colour of at least 0.1 % keep it and take a slot. The pinned entry takes the cluster nearest
  * to it. Deterministic.
@@ -121,14 +122,11 @@ export function reduceColours(o: ReduceInput): Reduction {
   const clustered = cl.clusters.reduce((a, c) => a + c.count, 0);
   const matches: ColourMatch[] = [];
   const entryOf = cl.clusters.map((c) => {
-    const index = c.pinned ? pin : nearestIndex(c.lab, labs);
-    if (c.count > 0)
-      matches.push({
-        index,
-        deltaE: deltaE2000(c.lab, labs[index]!),
-        share: c.count / clustered,
-      });
-    return index;
+    const m = c.pinned
+      ? { index: pin, deltaE: deltaE2000(c.lab, labs[pin]!) }
+      : matchEntry(c.lab, labs);
+    if (c.count > 0) matches.push({ ...m, share: c.count / clustered });
+    return m.index;
   });
   const lookup = (i: number, via: () => number): number =>
     fixed[i] || entryOf.length === 0 ? i : entryOf[via()]!;

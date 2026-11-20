@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { colourCount } from '../../state/import-wizard';
+  import { colourCount, poorMatches } from '../../state/import-wizard';
   import type { ImportWizard } from '../../state/import-wizard.svelte';
   import { paletteRowLabels } from '../../state/palette';
   import Icon from '../Icon.svelte';
@@ -15,6 +15,9 @@
   const t = $derived(w.editor.t);
   const loc = $derived(w.editor.locale);
   const count = $derived(colourCount(w.form.maxColors, w.palette.length));
+  const poor = $derived(
+    w.result ? poorMatches(w.result.a.stats.colourMatches, w.result.a.usedPalette) : [],
+  );
   const uid = $props.id();
 </script>
 
@@ -93,6 +96,16 @@
         </li>
       {/each}
     </ul>
+    {#if poor.length > 0}
+      <p class="muted sm">{t('wizard.col.poor')}</p>
+      <ul class="chips">
+        {#each poor as e (e.id)}
+          <li class="pill">
+            <span class="sw s" style:--c={e.hex}></span>{paletteRowLabels(e, loc).name}
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </section>
 {/if}
 

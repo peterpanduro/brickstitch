@@ -425,6 +425,24 @@ describe('analyseImage', () => {
     }
   });
 
+  it('reports how well each colour of the image is matched (R59.5)', () => {
+    const img = render(240, 240, () => false);
+    paint(img, (x) => x > 120, [32, 64, 208, 255]);
+    const run = (palette: PaletteEntry[]) =>
+      analyseImage(
+        img,
+        { ...shapedTarget(24, 24), mode: 'panel' },
+        palette,
+        settings({ maxColors: 2 }),
+      ).stats.colourMatches;
+    const exact = run([W, G, K, B]);
+    expect(exact.find((m) => m.colorId === 'b')!.deltaE).toBeLessThan(3);
+    expect(exact.find((m) => m.colorId === 'b')!.share).toBeGreaterThan(0.3);
+    const missing = run([W, G, K]);
+    expect(missing.every((m) => m.colorId !== 'b')).toBe(true);
+    expect(Math.max(...missing.map((m) => m.deltaE))).toBeGreaterThan(15);
+  });
+
   it('respects maxColors and is deterministic', () => {
     const img = render(240, 240, () => false);
     const cols: Rgba[] = [

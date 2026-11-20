@@ -5,6 +5,7 @@ import {
   colourCount,
   defaultPane,
   pictureView,
+  poorMatches,
   applyBlock,
   goTo,
   initialSteps,
@@ -369,6 +370,29 @@ describe('defaultPane', () => {
     expect(defaultPane('crop')).toBe('picture');
     expect(defaultPane('background')).toBe('picture');
     for (const s of ['colours', 'details', 'done'] as const) expect(defaultPane(s)).toBe('beads');
+  });
+});
+
+describe('poorMatches (R59.5)', () => {
+  const used = [
+    { id: 'a', hex: '#ffffff' },
+    { id: 'b', hex: '#d41f1c' },
+    { id: 'c', hex: '#2f8a30' },
+  ];
+  const m = (colorId: string, deltaE: number, share = 0.2) => ({ colorId, deltaE, share });
+
+  it('lists used colours standing in for a cluster more than ΔE 15 away', () => {
+    const r = poorMatches([m('a', 3), m('b', 15.1), m('c', 40)], used);
+    expect(r.map((e) => e.id)).toEqual(['b', 'c']);
+    expect(poorMatches([m('a', 15), m('b', 2)], used)).toEqual([]);
+  });
+
+  it('ignores clusters under half a percent and colours that are not used', () => {
+    expect(poorMatches([m('a', 30, 0.004), m('z', 30)], used)).toEqual([]);
+  });
+
+  it('lists a colour once however many clusters map to it', () => {
+    expect(poorMatches([m('b', 20), m('b', 25)], used)).toHaveLength(1);
   });
 });
 

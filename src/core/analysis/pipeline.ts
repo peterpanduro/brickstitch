@@ -61,8 +61,19 @@ export interface AnalysisStats {
   readonly ringsReplaced: number;
   /** Replaced rings: lattice cells, width, fitted centre (lattice-local mm), beads pruned. */
   readonly rings: readonly AnalysisRing[];
+  /** How well each colour cluster of the image is matched by its palette entry (R59.5). */
+  readonly colourMatches: readonly AnalysisColourMatch[];
   /** Milliseconds per stage, in pipeline order. */
   readonly timings: Readonly<Record<string, number>>;
+}
+
+/** Match of one colour cluster of the image to a palette entry (R59.5). */
+export interface AnalysisColourMatch {
+  readonly colorId: ColorId;
+  /** ΔE2000 between the cluster's average colour and the entry. */
+  readonly deltaE: number;
+  /** Share of the clustered foreground pixels, 0..1. */
+  readonly share: number;
 }
 
 /** A ring replaced by {@link analyseImage} (R37). */
@@ -133,6 +144,7 @@ export function analyseImage(
     bg,
     crop,
     restored,
+    matches,
     detail: rasterDetail,
   } = labelStage(prep, palette, settings, lap, deps.detailsCache);
   const labelT: DebugTransform =
@@ -258,6 +270,11 @@ export function analyseImage(
       despeckledBeads,
       ringsFound: detected.length,
       ringsReplaced: plans.length,
+      colourMatches: matches.map((m) => ({
+        colorId: palette[m.index]!.id,
+        deltaE: m.deltaE,
+        share: m.share,
+      })),
       rings: plans.map((p, i) => ({
         cells: p.cells,
         widthBeads: p.widthBeads,

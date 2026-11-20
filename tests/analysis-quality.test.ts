@@ -150,7 +150,7 @@ describe('targets (it.fails until fixed)', () => {
     expect(de('flower', 'stem')).toBeLessThan(12);
     expect(de('flower', 'leaf')).toBeLessThan(12);
   });
-  it.fails('flower: petals are not grey', { timeout: SLOW }, () => {
+  it('flower: petals are not grey', { timeout: SLOW }, () => {
     expect(shareWhere(beadsOf('flower', 'petals'), isGrey)).toBeLessThan(0.1);
   });
   it('flower with noise: mask IoU at least 0.97', { timeout: SLOW }, () => {

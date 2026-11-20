@@ -415,6 +415,8 @@ export const sv = {
   'wizard.col.list': 'Färger att välja bland',
   'wizard.col.detail': 'Liten men viktig (t.ex. ögon)',
   'wizard.col.used': 'Används nu',
+  'wizard.col.poor':
+    'Några färger i bilden har ingen nära match här, så närmaste färg används i stället:',
   'wizard.det.title': 'Hur detaljerat?',
   'wizard.det.lead': 'Välj den som liknar din bild mest. Du kan alltid måla om pärlor efteråt.',
   'wizard.det.presets': 'Detaljnivå',

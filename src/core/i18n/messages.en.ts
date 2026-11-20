@@ -415,6 +415,8 @@ export const en: Messages = {
   'wizard.col.list': 'Colours to choose from',
   'wizard.col.detail': 'Small but important (e.g. eyes)',
   'wizard.col.used': 'Used now',
+  'wizard.col.poor':
+    'Some colours in the picture have no close match here, so the nearest colour stands in for them:',
   'wizard.det.title': 'How detailed?',
   'wizard.det.lead':
     'Pick the one that looks most like your picture. You can always repaint beads afterwards.',
