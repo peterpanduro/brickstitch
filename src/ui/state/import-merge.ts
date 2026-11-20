@@ -25,6 +25,12 @@ import { nextColorId } from './palette';
 export const wizardBase = (target: ImportTarget, current: Pattern): Pattern =>
   target.source === 'editor' ? current : buildNewPattern(target.choice);
 
+/**
+ * Whether the catalogue colours start on (SPEC R53): when the base palette has two colours or
+ * fewer, since there is little to choose from otherwise.
+ */
+export const defaultIncludeExtra = (base: Pattern): boolean => base.palette.length <= 2;
+
 /** "Laga automatiskt" lines (SPEC R53 step 4); `null` when the fix is off or does not apply. */
 export interface AutoFixReport {
   readonly rings: Text | null;

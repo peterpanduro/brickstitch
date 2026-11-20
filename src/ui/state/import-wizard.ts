@@ -58,6 +58,44 @@ export const nextStep = (s: StepState): StepState => offset(s, 1);
 /** The previous step (`s` itself on the first). */
 export const prevStep = (s: StepState): StepState => offset(s, -1);
 
+/** What the picture card shows: the original, the background cutout, or the processed colours. */
+export type PictureView = 'original' | 'cutout' | 'processed';
+
+/** The Original / Processed toggle value; `null` until the user touches it. */
+export type ViewChoice = 'original' | 'processed' | null;
+
+/**
+ * The picture view of `step` (SPEC R39, R53): until the user chooses, the original on Beskär,
+ * the background cutout on Bakgrund and the processed colours from Färger on; a choice sticks,
+ * "processed" on Bakgrund being the cutout.
+ */
+export function pictureView(step: WizardStep, chosen: ViewChoice): PictureView {
+  if (chosen === 'original') return 'original';
+  if (step === 'background') return 'cutout';
+  if (chosen === 'processed') return 'processed';
+  return step === 'crop' ? 'original' : 'processed';
+}
+
+/** Phone pane: the picture while cropping and removing the background, the beads after (R53). */
+export const defaultPane = (step: WizardStep): 'picture' | 'beads' =>
+  step === 'crop' || step === 'background' ? 'picture' : 'beads';
+
+/** Colour counter of step 3 against the candidate palette size. */
+export interface ColourCount {
+  /** `maxColors` clamped to {@link max}. */
+  readonly shown: number;
+  /** Highest choosable count: 8, or fewer when there are fewer candidates. */
+  readonly max: number;
+  /** There are fewer candidates than `maxColors`. */
+  readonly limited: boolean;
+}
+
+/** Counter value for `maxColors` among `candidates` colours (SPEC R53 step 3). */
+export function colourCount(maxColors: number, candidates: number): ColourCount {
+  const max = Math.min(8, candidates);
+  return { shown: Math.min(maxColors, max), max, limited: candidates < maxColors };
+}
+
 /** Whether the stepper shows `step` as done: visited and not the current step. */
 export const stepDone = (s: StepState, step: WizardStep): boolean =>
   step !== s.step && s.visited.includes(step);

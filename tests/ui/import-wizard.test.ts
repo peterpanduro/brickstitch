@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, t, type AnalysisSettings, type Pattern } from '../../src/core';
 import {
   appliedSettings,
+  colourCount,
+  defaultPane,
+  pictureView,
   applyBlock,
   goTo,
   initialSteps,
@@ -329,5 +332,38 @@ describe('picture legend chip', () => {
     expect(pictureLegend('edge', tr, '1,5')).toBe('Rosa = tas bort, blir inga pärlor');
     expect(pictureLegend('details', tr, '1,5')).toContain('Grönt');
     expect(pictureLegend('lines', tr, '1,5')).toContain('1,5');
+  });
+});
+
+describe('pictureView', () => {
+  it('follows the step until the user chooses', () => {
+    expect(pictureView('crop', null)).toBe('original');
+    expect(pictureView('background', null)).toBe('cutout');
+    for (const s of ['colours', 'details', 'done'] as const)
+      expect(pictureView(s, null)).toBe('processed');
+  });
+
+  it('keeps the user choice on every step', () => {
+    for (const s of WIZARD_STEPS) expect(pictureView(s, 'original')).toBe('original');
+    expect(pictureView('crop', 'processed')).toBe('processed');
+    expect(pictureView('background', 'processed')).toBe('cutout');
+    expect(pictureView('colours', 'processed')).toBe('processed');
+  });
+});
+
+describe('defaultPane', () => {
+  it('shows the picture on crop and background, the beads after', () => {
+    expect(defaultPane('crop')).toBe('picture');
+    expect(defaultPane('background')).toBe('picture');
+    for (const s of ['colours', 'details', 'done'] as const) expect(defaultPane(s)).toBe('beads');
+  });
+});
+
+describe('colourCount', () => {
+  it('clamps to the candidates and says when it is limited', () => {
+    expect(colourCount(4, 2)).toEqual({ shown: 2, max: 2, limited: true });
+    expect(colourCount(4, 41)).toEqual({ shown: 4, max: 8, limited: false });
+    expect(colourCount(4, 4)).toEqual({ shown: 4, max: 4, limited: false });
+    expect(colourCount(8, 6)).toEqual({ shown: 6, max: 6, limited: true });
   });
 });

@@ -142,8 +142,84 @@ test('phone import preview: the pattern is not covered by the real-size inset', 
   await page.goto('./');
   await page.getByTestId('create-pattern').click();
   await dropImage(page);
+  await page.getByRole('radio', { name: 'Beads', exact: true }).check();
   const view = page.locator('[data-view="import"] .view:visible');
   await expect(view.locator('svg rect.bs-ladder')).toBeVisible({ timeout: 10_000 });
   await expect(view.locator('.inset')).toHaveCount(0);
   await expect(view.getByText('Start here')).toHaveCount(0);
+});
+
+test('start-page import of a coloured image: original on Crop, processed with catalogue colours on Colours', async ({
+  page,
+}) => {
+  await page.goto('./');
+  await page.getByTestId('create-pattern').click();
+  await page.goto('./#/new');
+  await expect(page.locator('[data-view="new"]')).toBeVisible();
+  await dropImage(page);
+  const next = page.getByRole('button', { name: /^Next:/ });
+  const view = (name: string) => page.getByRole('radio', { name, exact: true });
+
+  await expect(view('Original')).toBeChecked();
+  await next.click();
+  await expect(view('How it is read')).toBeChecked();
+  await next.click();
+  await expect(page.getByRole('heading', { name: 'Which colours?' })).toBeVisible();
+  await expect(view('How it is read')).toBeChecked();
+  await expect(page.getByRole('radio', { name: /Pick for me from the catalogue/ })).toBeChecked();
+  const used = page.locator('section[aria-labelledby="import-used"] li');
+  await expect(async () => expect(await used.count()).toBeGreaterThan(2)).toPass({
+    timeout: 10_000,
+  });
+
+  await view('Original').check();
+  await next.click();
+  await expect(view('Original')).toBeChecked();
+});
+
+test('phone import: the pane follows the step until the user picks one', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('./');
+  await page.getByTestId('create-pattern').click();
+  await dropImage(page);
+  const next = page.getByRole('button', { name: /^Next:/ });
+  const pane = (name: string) => page.getByRole('radio', { name, exact: true });
+
+  await expect(pane('Picture')).toBeChecked();
+  await next.click();
+  await expect(pane('Picture')).toBeChecked();
+  await next.click();
+  await expect(pane('Beads')).toBeChecked();
+  await pane('Picture').check();
+  await next.click();
+  await expect(pane('Picture')).toBeChecked();
+});
+
+test('editor import: catalogue colours start on for the starter pattern, off with a third colour', async ({
+  page,
+}) => {
+  await page.goto('./');
+  await page.getByTestId('create-pattern').click();
+  await expect(page.locator('[data-view="editor"]')).toBeVisible();
+  const next = page.getByRole('button', { name: /^Next:/ });
+  const toColours = async () => {
+    await dropImage(page);
+    await next.click();
+    await next.click();
+    await expect(page.getByRole('heading', { name: 'Which colours?' })).toBeVisible();
+  };
+
+  await toColours();
+  await expect(page.getByRole('radio', { name: /Pick for me from the catalogue/ })).toBeChecked();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-view="editor"]')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Add colour' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add colour' });
+  await dialog.getByRole('searchbox').fill('723');
+  await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await toColours();
+  await expect(page.getByRole('radio', { name: /Only my pattern/ })).toBeChecked();
 });

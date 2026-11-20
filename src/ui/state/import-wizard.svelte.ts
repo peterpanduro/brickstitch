@@ -23,6 +23,7 @@ import { sliderHighlight, type ActiveSlider } from './highlight';
 import {
   autoFixReport,
   candidatePalette,
+  defaultIncludeExtra,
   importStats,
   mergeImport,
   wizardBase,
@@ -36,6 +37,9 @@ import {
   initialWizard,
   modeSwitchPatch,
   nextStep,
+  pictureView,
+  type PictureView,
+  type ViewChoice,
   prevStep,
   runSettings,
   appliedSettings,
@@ -88,7 +92,8 @@ export class ImportWizard {
   includeExtra = $state(false);
   detail = $state<Record<string, boolean>>({});
   crop = $state<CropRect | null>(null);
-  showOriginal = $state(false);
+  /** The Original / Processed toggle, `null` until touched (the view then follows the step). */
+  viewChoice = $state<ViewChoice>(null);
   customSize = $state(false);
   activeSlider = $state<ActiveSlider | null>(null);
   working = $state(true);
@@ -134,9 +139,14 @@ export class ImportWizard {
   line = $derived(lineParams(this.form.lineSensitivity));
   /** Crop and orientation the processed picture is valid for. */
   key = $derived(JSON.stringify([this.crop, this.form.rotation, this.form.flipH]));
+  view = $derived<PictureView>(pictureView(this.steps.step, this.viewChoice));
   processed = $derived(
-    !this.showOriginal && this.result?.a.debug && this.result.key === this.key
-      ? { debug: this.result.a.debug, highlight: this.activeSlider }
+    this.view !== 'original' && this.result?.a.debug && this.result.key === this.key
+      ? {
+          debug: this.result.a.debug,
+          highlight: this.activeSlider,
+          view: this.view,
+        }
       : null,
   );
   merged = $derived(this.result && mergeImport(this.base, this.result.a, this.lattice));
@@ -196,6 +206,7 @@ export class ImportWizard {
     this.width = init.width;
     this.height = init.height;
     this.lastPreset = matchingPreset(DETAIL_PRESETS, init.form);
+    this.includeExtra = defaultIncludeExtra(untrack(() => wizardBase(target, editor.pattern)));
   }
 
   /** Detail preset equal to the form (none after a manual change). */

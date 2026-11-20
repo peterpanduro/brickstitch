@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { colourLabel, formatMm } from '../../../core';
+  import { formatMm } from '../../../core';
+  import { paletteRowLabels } from '../../state/palette';
   import { importStatsText } from '../../state/import-merge';
   import type { ImportWizard } from '../../state/import-wizard.svelte';
   import Icon from '../Icon.svelte';
@@ -30,7 +31,9 @@
     <dd>
       <ul class="chips">
         {#each w.result.a.usedPalette as e (e.id)}
-          <li class="pill"><span class="sw s" style:--c={e.hex}></span>{colourLabel(e, loc)}</li>
+          <li class="pill">
+            <span class="sw s" style:--c={e.hex}></span>{paletteRowLabels(e, loc).name}
+          </li>
         {/each}
       </ul>
     </dd>

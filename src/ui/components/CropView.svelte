@@ -31,7 +31,8 @@
   /**
    * Oriented image view with a crop selection (SPEC R38); `crop` is in source image px.
    * `processed` replaces the picture with the analysed image of the current crop and orientation,
-   * with an optional slider highlight (R39); `null` shows the original. The view fills its
+   * with an optional slider highlight (R39); `view: 'cutout'` keeps the original and shows only
+   * the removed background as checkerboard; `null` shows the original. The view fills its
    * container, aspect kept; `legend` is a chip over the picture (R53).
    */
   let {
@@ -47,7 +48,11 @@
     rotation: Rotation;
     flipH: boolean;
     crop: CropRect | null;
-    processed?: { debug: AnalysisDebug; highlight: ActiveSlider | null } | null;
+    processed?: {
+      debug: AnalysisDebug;
+      highlight: ActiveSlider | null;
+      view: 'processed' | 'cutout';
+    } | null;
     legend?: string | null;
     t: EditorStore['t'];
   } = $props();
@@ -74,6 +79,7 @@
   let clientWidth = $state(1);
   let draft = $state<CropRect | null>(null);
   let cursor = $state('crosshair');
+  let cut: HTMLCanvasElement | undefined;
   let drag: { handle: CropHandle; x: number; y: number; rect: CropRect | null } | null = null;
 
   const o = $derived({ imgW: img.width, imgH: img.height, rotation, flipH });
@@ -142,8 +148,19 @@
   }
 
   const debug = $derived(processed?.debug);
+  const cutout = $derived(processed?.view === 'cutout');
   const labels = $derived(
-    debug && offscreen(labelPixels(debug.labels, debug.palette), debug.labels.transform),
+    debug && !cutout
+      ? offscreen(labelPixels(debug.labels, debug.palette), debug.labels.transform)
+      : null,
+  );
+  const removed = $derived(
+    debug && cutout
+      ? offscreen(
+          layerPixels([{ layer: debug.backgroundMask, rgba: [0, 0, 0, 255] }]),
+          debug.backgroundMask.transform,
+        )
+      : null,
   );
   const highlight = $derived.by(() => {
     const h = processed?.highlight;
@@ -171,16 +188,28 @@
       Math.max(1, Math.round((CHECKER.cssPx * c.width) / Math.max(1, clientWidth))),
     );
     const fill = tile && ctx.createPattern(tile, 'repeat');
-    if (fill) {
+    const place = (l: NonNullable<typeof labels>, to: CanvasRenderingContext2D): void => {
+      const m = layerToDisplay(l.t, crop, o);
+      to.imageSmoothingEnabled = m.sx * k < 1;
+      to.drawImage(l.c, m.x0 * k, m.y0 * k, l.c.width * m.sx * k, l.c.height * m.sy * k);
+    };
+    if (removed && fill) {
+      cut ??= document.createElement('canvas');
+      cut.width = c.width;
+      cut.height = c.height;
+      const cc = cut.getContext('2d');
+      if (cc) {
+        place(removed, cc);
+        cc.globalCompositeOperation = 'source-in';
+        cc.fillStyle = fill;
+        cc.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(cut, 0, 0);
+      }
+    } else if (fill) {
       ctx.fillStyle = fill;
       ctx.fillRect(0, 0, c.width, c.height);
     }
-    for (const l of [labels, highlight]) {
-      if (!l) continue;
-      const m = layerToDisplay(l.t, crop, o);
-      ctx.imageSmoothingEnabled = m.sx * k < 1;
-      ctx.drawImage(l.c, m.x0 * k, m.y0 * k, l.c.width * m.sx * k, l.c.height * m.sy * k);
-    }
+    for (const l of [labels, highlight]) if (l) place(l, ctx);
   });
 
   /** Two-grey checkerboard tile with squares of `s` canvas px. */

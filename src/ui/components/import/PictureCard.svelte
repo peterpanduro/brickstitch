@@ -32,8 +32,8 @@
         { value: 'processed', label: t('wizard.view.processed') },
         { value: 'original', label: t('wizard.view.original') },
       ]}
-      value={w.showOriginal ? 'original' : 'processed'}
-      onchange={(v) => (w.showOriginal = v === 'original')}
+      value={w.view === 'original' ? 'original' : 'processed'}
+      onchange={(v) => (w.viewChoice = v)}
     />
   </div>
   <CropView

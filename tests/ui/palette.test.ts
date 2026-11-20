@@ -64,6 +64,12 @@ describe('paletteRowLabels', () => {
     expect(paletteRowLabels({ id: 'a', db: 'DB-200', hex: '#F7F7F5' }, 'en').name).toBe('White');
   });
 
+  it('has no DB line when the DB number is the name (unnamed, uncatalogued)', () => {
+    const l = paletteRowLabels({ id: 'a', db: 'DB-9999', hex: '#123456' }, 'sv');
+    expect(l.name).toBe('DB-9999');
+    expect(l).not.toHaveProperty('db');
+  });
+
   it('lets a user name override the seed name', () => {
     const l = paletteRowLabels(
       { id: 'a', db: 'DB-200', name: 'Snö', hex: '#fff', approximate: true },

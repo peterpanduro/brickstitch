@@ -19,6 +19,7 @@ import { createEditor, current, undoEdit } from '../../src/ui/state/editor';
 import { dropAllowed, fileKind, scaledSize } from '../../src/ui/state/file';
 import {
   candidatePalette,
+  defaultIncludeExtra,
   importStats,
   mergeImport,
   importStatsText,
@@ -209,6 +210,18 @@ describe('candidate palette', () => {
     expect(c.filter((e) => e.db === 'DB-010')).toHaveLength(1);
     expect(c.length).toBe(2 + 1 + SEED_CATALOG.length - 2);
     expect(new Set(c.map((e) => e.id)).size).toBe(c.length);
+  });
+});
+
+describe('defaultIncludeExtra', () => {
+  it('is on for a base palette of two colours or fewer', () => {
+    expect(defaultIncludeExtra({ ...base, palette: [W] })).toBe(true);
+    expect(defaultIncludeExtra(base)).toBe(true);
+  });
+
+  it('is off for three colours or more', () => {
+    const c3 = { id: 'c3', hex: '#ff0000' };
+    expect(defaultIncludeExtra({ ...base, palette: [W, K, c3] })).toBe(false);
   });
 });
 

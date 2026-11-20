@@ -14,7 +14,7 @@
   import Segmented from '../components/import/Segmented.svelte';
   import Stepper from '../components/import/Stepper.svelte';
   import type { EditorStore } from '../state/editor.svelte';
-  import { WIZARD_STEPS, type ImportTarget } from '../state/import-wizard';
+  import { defaultPane, WIZARD_STEPS, type ImportTarget } from '../state/import-wizard';
   import { DEBOUNCE_MS, IDLE_MS, ImportWizard } from '../state/import-wizard.svelte';
   import type { ViewNav } from '../state/route';
 
@@ -39,7 +39,8 @@
   // svelte-ignore state_referenced_locally
   const w = new ImportWizard(editor, img, target, fileName);
   const phone = new MediaQuery('(max-width: 599px)', false);
-  let pane = $state<'picture' | 'beads'>('beads');
+  let chosenPane = $state<'picture' | 'beads' | null>(null);
+  const pane = $derived(chosenPane ?? defaultPane(w.steps.step));
   onDestroy(() => w.highlighter.dispose());
 
   const index = $derived(WIZARD_STEPS.indexOf(w.steps.step));
@@ -101,7 +102,7 @@
           { value: 'beads', label: editor.t('wizard.pane.beads') },
         ]}
         value={pane}
-        onchange={(v) => (pane = v)}
+        onchange={(v) => (chosenPane = v)}
       />
     </div>
   {/if}
