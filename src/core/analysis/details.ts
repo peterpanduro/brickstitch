@@ -297,23 +297,36 @@ function restore(
 
 /**
  * Clears the outline seeds `cand` (set in `seeds`) of every group that does not follow the
- * silhouette for at least `minRun` px. Seeds within 2 px of each other form a group; its run is the
- * number of its pixels that touch the background (`toBg ≤ 1`), about its length along the boundary.
+ * silhouette for at least `minRun` px. Seeds within `link` px of each other (Chebyshev) form a
+ * group, so gaps up to `link` px (anti-alias, width-estimate dropouts) do not split an outline.
+ * The run of a group is the smaller of its bounding-box diagonal and its number of pixels touching
+ * the background (`toBg ≤ 1`): a thin stroke with background on both sides gets its length, not
+ * twice it, and scattered spots do not add up to a stretch.
  */
-function keepContinuous(seeds: Mask, cand: readonly number[], toBg: Float32Array, minRun: number) {
+function keepContinuous(
+  seeds: Mask,
+  cand: readonly number[],
+  toBg: Float32Array,
+  link: number,
+  minRun: number,
+) {
   const { width: w, height: h } = seeds;
   const todo = new Set(cand);
   for (const start of cand) {
     if (!todo.delete(start)) continue;
     const group = [start];
+    let [x0, x1, y0, y1] = [w, -1, h, -1];
+    let touching = 0;
     for (let i = 0; i < group.length; i++) {
       const x = group[i]! % w;
       const y = (group[i]! - x) / w;
-      for (let yy = Math.max(0, y - 2); yy <= Math.min(h - 1, y + 2); yy++)
-        for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, x + 2); xx++)
+      [x0, x1, y0, y1] = [Math.min(x0, x), Math.max(x1, x), Math.min(y0, y), Math.max(y1, y)];
+      if (toBg[group[i]!]! <= 1) touching++;
+      for (let yy = Math.max(0, y - link); yy <= Math.min(h - 1, y + link); yy++)
+        for (let xx = Math.max(0, x - link); xx <= Math.min(w - 1, x + link); xx++)
           if (todo.delete(yy * w + xx)) group.push(yy * w + xx);
     }
-    if (group.filter((p) => toBg[p]! <= 1).length < minRun)
+    if (Math.min(Math.hypot(x1 - x0 + 1, y1 - y0 + 1), touching) < minRun)
       for (const p of group) seeds.data[p] = 0;
   }
 }
@@ -402,7 +415,7 @@ function thicken(
             cand.push(p);
           }
         }
-        keepContinuous(seeds, cand, toBg!, minWidthPx * OUTLINE_MIN_RUN);
+        keepContinuous(seeds, cand, toBg!, Math.ceil(minWidthPx), minWidthPx * OUTLINE_MIN_RUN);
         if (seeds.data.includes(1)) grow(k, seeds, minWidthPx ** 2, false);
       }
     }
