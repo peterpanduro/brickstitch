@@ -294,6 +294,11 @@ export class EditorStore {
     return patternFile(this.pattern, APP_VERSION);
   }
 
+  /** Converts a panel to a free shape (one undo step). */
+  convertToShaped(): void {
+    this.#set(ed.convertToShaped(this.#s));
+  }
+
   setTitle(title: string): void {
     this.#edit((p) => (p.title === title ? p : { ...p, title }));
   }

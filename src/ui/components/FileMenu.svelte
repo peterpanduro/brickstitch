@@ -9,7 +9,8 @@
   import Icon from './Icon.svelte';
 
   /**
-   * "Arkiv" menu (SPEC R46): Nytt mönster, Öppna fil…, Spara som fil and Utseende (R45). On touch
+   * "Arkiv" menu (SPEC R46): Nytt mönster, Öppna fil…, Spara som fil, "Konvertera till fri form" (panels only, R58)
+   * and Utseende (R45). On touch
    * layouts (R51) it is the "···" menu (`compact`), which also holds the language and, on phones,
    * "Visa allt" (`onFit`).
    */
@@ -128,6 +129,16 @@
       <button type="button" role="menuitem" tabindex="-1" onclick={() => run(save)}>
         <Icon name="download" />{editor.t('shell.saveFile')}
       </button>
+      {#if editor.pattern.mode === 'panel'}
+        <button
+          type="button"
+          role="menuitem"
+          tabindex="-1"
+          onclick={() => run(() => editor.convertToShaped())}
+        >
+          <Icon name="eraser" />{editor.t('shell.convertToShaped')}
+        </button>
+      {/if}
       {#if onFit}
         <button type="button" role="menuitem" tabindex="-1" onclick={() => run(onFit)}>
           <Icon name="grid" />{editor.t('size.zoomFit')}

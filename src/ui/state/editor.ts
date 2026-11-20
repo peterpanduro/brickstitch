@@ -5,6 +5,7 @@ import {
   prune,
   resolveLadder,
   setCell,
+  toShaped,
   type ColorId,
   type Coord,
   type Pattern,
@@ -70,6 +71,9 @@ export function selectColorIndex(s: EditorState, n: number): EditorState {
 /** Applies `edit` to the pattern as one undo step (ignored during a stroke). */
 export const applyEdit = (s: EditorState, edit: (p: Pattern) => Pattern): EditorState =>
   s.stroke ? s : withPattern(s, push(s.history, edit(current(s))));
+
+/** Converts a panel to a free shape as one undo step; a no-op on shaped patterns. */
+export const convertToShaped = (s: EditorState): EditorState => applyEdit(s, toShaped);
 
 /** Undo, ignored during a stroke. */
 export const undoEdit = (s: EditorState): EditorState =>

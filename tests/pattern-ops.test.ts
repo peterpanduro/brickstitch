@@ -12,6 +12,7 @@ import {
   paintCells,
   removePaletteEntry,
   setCell,
+  toShaped,
   updatePaletteEntry,
 } from '../src/core/pattern/ops';
 import { fromRhJson, fromRowsJson } from './adapters';
@@ -195,5 +196,22 @@ describe('palette ops', () => {
     const q = removePaletteEntry(p, 'R', 'B');
     expect(getCell(q, { r: 0, h: 0 })).toBe('B');
     expect(q.palette.map((e) => e.id)).toEqual(['B']);
+  });
+});
+
+describe('toShaped', () => {
+  const panel = createPattern({ ...base, mode: 'panel', width: 4, height: 3, fill: 'R' });
+
+  it('flips the mode and keeps cells and palette', () => {
+    const s = toShaped(panel);
+    expect(s.mode).toBe('shaped');
+    expect(s.cells).toBe(panel.cells);
+    expect(s.palette).toBe(panel.palette);
+    expect(panel.mode).toBe('panel');
+  });
+
+  it('returns an already shaped pattern itself', () => {
+    const s = toShaped(panel);
+    expect(toShaped(s)).toBe(s);
   });
 });

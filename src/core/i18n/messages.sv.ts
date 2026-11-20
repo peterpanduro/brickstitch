@@ -198,6 +198,7 @@ export const sv = {
   'shell.notSaved': 'Inte sparat',
   'shell.file': 'Arkiv',
   'shell.openFile': 'Öppna fil…',
+  'shell.convertToShaped': 'Konvertera till fri form',
   'shell.saveFile': 'Spara som fil',
   'shell.fromImage': 'Från bild',
   'shell.print': 'Skriv ut mönster',

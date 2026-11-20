@@ -45,6 +45,10 @@ export function createPattern(o: NewPatternOptions): Pattern {
   };
 }
 
+/** Panel -> shaped (same cells and palette, so the Erase tool applies); a shaped pattern is returned as is. */
+export const toShaped = (p: Pattern): Pattern =>
+  p.mode === 'shaped' ? p : { ...p, mode: 'shaped' };
+
 const indexOf = (p: Pattern, { r, h }: Coord): number | null => {
   if (r < 0 || r >= p.height || (h - r) % 2 !== 0) return null;
   const i = iOf(r, h);

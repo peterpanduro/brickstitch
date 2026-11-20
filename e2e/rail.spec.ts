@@ -22,6 +22,19 @@ test('tool rail: roving radiogroup, tool card follows the tool', async ({ page }
   await expect(page.getByRole('radio', { name: /Move|Flytta/ })).toHaveCount(0);
 });
 
+test('File > Convert to free shape adds Erase; undo removes it', async ({ page }) => {
+  const erase = page.locator('[data-tool=erase]');
+  await expect(erase).toHaveCount(0);
+  await page.getByRole('button', { name: 'File' }).click();
+  await page.getByRole('menuitem', { name: 'Convert to free shape' }).click();
+  await expect(erase).toBeVisible();
+  await page.getByRole('button', { name: 'File' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Convert to free shape' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(erase).toHaveCount(0);
+});
+
 test('palette: add a colour from the picker, edit popover returns focus', async ({ page }) => {
   const rows = page.getByRole('radiogroup', { name: 'Colours' }).getByRole('radio');
   const before = await rows.count();

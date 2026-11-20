@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { analyse, createPattern, getCell, SEED_CATALOG, type Pattern } from '../../src/core';
+import {
+  analyse,
+  createPattern,
+  getCell,
+  SEED_CATALOG,
+  setCell,
+  warnings,
+  type Pattern,
+} from '../../src/core';
 import {
   applyEdit,
   autoLadder,
   cancelStroke,
+  convertToShaped,
   createEditor,
   current,
   pinnedLadder,
@@ -186,5 +195,32 @@ describe('cancelStroke', () => {
   it('is a no-op without a stroke', () => {
     const s = createEditor(panel());
     expect(cancelStroke(s)).toBe(s);
+  });
+});
+
+describe('convertToShaped', () => {
+  it('is one undo step that makes erase available and undo restores the panel', () => {
+    const s0 = setTool(createEditor(panel()), 'erase');
+    expect(s0.tool).toBe('paint');
+    const s1 = convertToShaped(s0);
+    expect(current(s1).mode).toBe('shaped');
+    expect(current(s1).cells).toBe(current(s0).cells);
+    expect(setTool(s1, 'erase').tool).toBe('erase');
+    const back = undoEdit(setTool(s1, 'erase'));
+    expect(current(back).mode).toBe('panel');
+    expect(back.tool).toBe('paint');
+    expect(current(redoEdit(back)).mode).toBe('shaped');
+  });
+
+  it('leaves a shaped pattern untouched', () => {
+    const s1 = convertToShaped(createEditor(panel()));
+    expect(convertToShaped(s1)).toBe(s1);
+  });
+
+  it('turns the gaps of a panel into intentional ones', () => {
+    const gap = applyEdit(createEditor(panel()), (p) => setCell(p, { r: 1, h: 1 }, null));
+    const codes = (s: EditorState): string[] => warnings(current(s), 0).map((w) => w.code);
+    expect(codes(gap)).toContain('panelGaps');
+    expect(codes(convertToShaped(gap))).not.toContain('panelGaps');
   });
 });

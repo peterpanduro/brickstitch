@@ -198,6 +198,7 @@ export const en: Messages = {
   'shell.notSaved': 'Not saved',
   'shell.file': 'File',
   'shell.openFile': 'Open file…',
+  'shell.convertToShaped': 'Convert to free shape',
   'shell.saveFile': 'Save as file',
   'shell.fromImage': 'From image',
   'shell.print': 'Print pattern',
