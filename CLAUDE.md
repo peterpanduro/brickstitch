@@ -8,7 +8,8 @@ Static, client-only web app (Svelte 5 + TypeScript + Vite) for designing brick s
 src/core/        pure TS, no DOM (geometry, pattern, palette, feasibility, instructions,
                  scene, imaging, analysis, persist, i18n, ring); imports only from src/core
   analysis/      image → pattern pipeline (stage, pipeline, thicken, details = Details slider,
-                 debug = layers for the processed import picture, ring-fix, ...)
+                 debug = layers for the processed import picture, ring-fix, cluster + reduce = R59.3
+                 palette reduction, ...)
 src/export-pdf/  Analysis + Scene + i18n -> PDF bytes (jsPDF, Helvetica/WinAnsi, runs in node);
                  content.ts (texts), draw.ts (scene shapes), crop.ts (motif crop, diagram paging),
                  page.ts (page flow helpers), rows.ts (row list columns), render.ts, winansi.ts

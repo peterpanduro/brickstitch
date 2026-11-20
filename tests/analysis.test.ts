@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { analyse, colourCounts, hexToLab, type PaletteEntry, type Pattern } from '../src/core';
+import { hexToRgb } from '../src/core/palette/color';
 import {
   DEFAULT_SETTINGS,
   analyseImage,
@@ -10,9 +11,9 @@ import {
 import { despeckle } from '../src/core/analysis/despeckle';
 import { computeFit } from '../src/core/analysis/fit';
 import { resolveFit, resolveMargin } from '../src/core/analysis/settings';
-import { foregroundMask } from '../src/core/analysis/prepare';
+import { foregroundMask, makeNearest } from '../src/core/analysis/prepare';
 import { rasterise } from '../src/core/analysis/rasterise';
-import { reducePalette } from '../src/core/analysis/reduce';
+import { reduceColours } from '../src/core/analysis/reduce';
 import { makeUnmix } from '../src/core/analysis/unmix';
 import type { RgbaImage } from '../src/core/imaging';
 
@@ -79,42 +80,134 @@ describe('lineParams', () => {
   });
 });
 
-describe('reducePalette', () => {
-  const labs = [W, G, K, R, B].map((e) => hexToLab(e.hex));
+describe('reduceColours', () => {
   const pal = [W, G, K, R, B];
+  const labs = pal.map((e) => hexToLab(e.hex));
+  const nearest = makeNearest(labs);
 
-  it('drops colours under 0.5 % into their nearest kept colour', () => {
-    const r = reducePalette([1000, 2, 500, 0, 0], pal, labs, { maxColors: 4 });
-    expect(r.kept).toEqual([0, 2]);
-    expect(r.map[1]).toBe(0);
-    expect(r.map[3]).toBe(-1);
+  function run(
+    specs: readonly (readonly [string, number])[],
+    o: { maxColors: number; pinned?: number; palette?: PaletteEntry[] },
+  ): ReturnType<typeof reduceColours> {
+    const palette = o.palette ?? pal;
+    const n = specs.reduce((a, [, c]) => a + c, 0);
+    const data = new Uint8ClampedArray(n * 4);
+    const labels = new Int16Array(n);
+    let p = 0;
+    for (const [hex, c] of specs)
+      for (let i = 0; i < c; i++, p++) {
+        const [r, g, b] = hexToRgb(hex);
+        data.set([r, g, b, 255], p * 4);
+        labels[p] = nearest(r, g, b);
+      }
+    return reduceColours({
+      data,
+      labels,
+      width: n,
+      blend: new Uint8Array(n),
+      detail: palette.map((e) => !!e.detail),
+      labs: palette.map((e) => hexToLab(e.hex)),
+      nearest,
+      ...o,
+    });
+  }
+
+  it('keeps a distinct colour under 0.5 % that the old drop rule lost', () => {
+    const r = run(
+      [
+        ['#ffffff', 1000],
+        ['#000000', 500],
+        ['#d02020', 4],
+      ],
+      { maxColors: 3 },
+    );
+    expect(r.at(0xd0, 0x20, 0x20)).toBe(3);
+    expect(r.matches.map((m) => m.index).sort()).toEqual([0, 2, 3]);
   });
 
-  it('keeps a small detail colour at >= 0.1 %', () => {
+  it('merges clusters of one colour before losing a different one', () => {
+    const r = run(
+      [
+        ['#ffffff', 400],
+        ['#e8e8e8', 400],
+        ['#d02020', 20],
+        ['#000000', 300],
+      ],
+      { maxColors: 3 },
+    );
+    expect(r.at(0xe8, 0xe8, 0xe8)).toBe(r.at(255, 255, 255));
+    expect(r.at(0xd0, 0x20, 0x20)).toBe(3);
+    expect(r.at(0, 0, 0)).toBe(2);
+  });
+
+  it('maps a cluster to the nearest entry and reports the distance', () => {
+    const r = run(
+      [
+        ['#ffffff', 100],
+        ['#c82828', 50],
+      ],
+      { maxColors: 2 },
+    );
+    const red = r.matches.find((m) => m.index === 3)!;
+    expect(red.deltaE).toBeGreaterThan(0);
+    expect(red.deltaE).toBeLessThan(10);
+    expect(red.share).toBeCloseTo(1 / 3);
+  });
+
+  it('keeps a detail colour at >= 0.1 % and lets a rarer one join the nearest cluster', () => {
     const p = [W, G, KD, R, B];
-    const r = reducePalette([1000, 0, 2, 0, 0], p, labs, { maxColors: 4 });
-    expect(r.kept).toEqual([0, 2]);
+    const kept = run(
+      [
+        ['#ffffff', 1000],
+        ['#000000', 2],
+      ],
+      { maxColors: 2, palette: p },
+    );
+    expect(kept.at(0, 0, 0)).toBe(2);
+    const joined = run(
+      [
+        ['#ffffff', 5000],
+        ['#d02020', 2000],
+        ['#000000', 2],
+      ],
+      { maxColors: 2, palette: p },
+    );
+    expect(joined.at(0, 0, 0)).not.toBe(2);
   });
 
-  it('merges least-used non-detail colours until within maxColors, deterministically', () => {
-    const hist = [400, 300, 200, 150, 100];
-    const a = reducePalette(hist, pal, labs, { maxColors: 2 });
-    const b = reducePalette(hist, pal, labs, { maxColors: 2 });
-    expect(a).toEqual(b);
-    expect(a.kept).toEqual([0, 1]);
-    expect(a.kept.length).toBe(2);
+  it('pins an entry: it is kept and counts towards maxColors', () => {
+    const r = run(
+      [
+        ['#808080', 300],
+        ['#000000', 200],
+        ['#d02020', 150],
+        ['#2040d0', 100],
+      ],
+      { maxColors: 2, pinned: 1 },
+    );
+    expect(r.matches.map((m) => m.index)).toContain(1);
+    expect(new Set(r.matches.map((m) => m.index)).size).toBeLessThanOrEqual(2);
+    const spare = run(
+      [
+        ['#000000', 200],
+        ['#d02020', 150],
+        ['#2040d0', 100],
+      ],
+      { maxColors: 2, pinned: 0 },
+    );
+    expect(new Set(spare.matches.map((m) => m.index)).size).toBe(1);
   });
 
-  it('merges detail colours only when non-detail ones are exhausted', () => {
-    const p = [W, G, KD, R, B];
-    const r = reducePalette([400, 300, 10, 150, 100], p, labs, { maxColors: 2 });
-    expect(r.kept).toContain(2);
-  });
-
-  it('never merges a pinned colour away', () => {
-    const r = reducePalette([0, 300, 200, 150, 100], pal, labs, { maxColors: 2, pinned: [0] });
-    expect(r.kept).toContain(0);
-    expect(r.kept.length).toBe(2);
+  it('is deterministic', () => {
+    const specs = [
+      ['#ffffff', 400],
+      ['#808080', 300],
+      ['#000000', 200],
+      ['#d02020', 150],
+    ] as const;
+    const a = run(specs, { maxColors: 2 });
+    const b = run(specs, { maxColors: 2 });
+    expect(a.matches).toEqual(b.matches);
   });
 });
 

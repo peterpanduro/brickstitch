@@ -134,19 +134,19 @@ describe('full-bleed photos are not keyed away (R59.1)', () => {
 });
 
 describe('targets (it.fails until fixed)', () => {
-  it.fails('smiley with 4 colours: cheeks get pink, not red', { timeout: SLOW }, () => {
+  it('smiley with 4 colours: cheeks get pink, not red', { timeout: SLOW }, () => {
     expect(de('smiley', 'cheeks')).toBeLessThan(12);
   });
-  it.fails('landscape: the sun is yellow', { timeout: SLOW }, () => {
+  it('landscape: the sun is yellow', { timeout: SLOW }, () => {
     expect(de('landscape', 'sun')).toBeLessThan(12);
   });
-  it.fails('landscape: the door is brown, not red', { timeout: SLOW }, () => {
+  it('landscape: the door is brown, not red', { timeout: SLOW }, () => {
     expect(de('landscape', 'door')).toBeLessThan(15);
   });
-  it.fails('landscape with noise: the roof stays red', { timeout: SLOW }, () => {
+  it('landscape with noise: the roof stays red', { timeout: SLOW }, () => {
     expect(de('landscape-noise', 'roof')).toBeLessThan(12);
   });
-  it.fails('flower: stem and leaf are green', { timeout: SLOW }, () => {
+  it('flower: stem and leaf are green', { timeout: SLOW }, () => {
     expect(de('flower', 'stem')).toBeLessThan(12);
     expect(de('flower', 'leaf')).toBeLessThan(12);
   });

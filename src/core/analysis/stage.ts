@@ -15,7 +15,7 @@ import {
   type NearestFn,
   type ResolvedBackground,
 } from './prepare';
-import { reducePalette } from './reduce';
+import { reduceColours, type ColourMatch, type Reduction } from './reduce';
 import {
   lineParams,
   resolveFit,
@@ -135,6 +135,8 @@ export interface Labelled {
   readonly restored?: Uint8Array;
   /** Working crop (padded), `null` without foreground. */
   readonly crop: { readonly img: RgbaImage; readonly pad: number } | null;
+  /** How well each colour cluster of the image is matched by its palette entry (R59.5). */
+  readonly matches: readonly ColourMatch[];
 }
 
 /** Working crop, labelling (masked median, unmixing) and palette reduction (SPEC §5.2, R19, R22). */
@@ -146,8 +148,11 @@ export function labelStage(
   detailsCache?: DetailsCache,
 ): Labelled {
   let l: LabelImage = { labels: new Int16Array(0), cover: new Float32Array(0), w: 0, h: 0 };
-  let hist = new Array<number>(palette.length).fill(0);
   let crop: Labelled['crop'] = null;
+  let hist = new Array<number>(palette.length).fill(0);
+  let matches: readonly ColourMatch[] = [];
+  let at: Reduction['at'] = () => -1;
+  let bg = p.bg;
   if (p.box) {
     const pad = p.minWpx > 1 ? Math.ceil(p.minWpx / 2) + 2 : 1;
     const c = workingCrop(p.work, p.mask, p.box, p.k, pad);
@@ -157,20 +162,33 @@ export function labelStage(
     l = { labels: labelled.labels, cover: labelled.cover, w: labelled.w, h: labelled.h };
     crop = { img: c.img, pad };
     lap('label');
-  }
-  const bg = p.panel && p.bg < 0 ? argmax(hist) : p.bg;
-  const red = reducePalette(hist, palette, p.labs, {
-    maxColors: settings.maxColors,
-    pinned: bg >= 0 ? [bg] : [],
-  });
-  for (let q = 0; q < l.labels.length; q++)
-    if (l.labels[q]! >= 0) l.labels[q] = red.map[l.labels[q]!]!;
+    if (p.panel && bg < 0) bg = argmax(hist);
+    const red = reduceColours({
+      data: labelled.den,
+      labels: l.labels,
+      width: labelled.w,
+      blend: labelled.blend,
+      detail: p.detail,
+      labs: p.labs,
+      nearest: p.nearest,
+      maxColors: settings.maxColors,
+      ...(bg >= 0 ? { pinned: bg } : {}),
+    });
+    const d = labelled.den;
+    for (let q = 0; q < l.labels.length; q++)
+      if (l.labels[q]! >= 0)
+        l.labels[q] = labelled.blend[q]
+          ? red.ofEntry(l.labels[q]!)
+          : red.at(d[q * 4]!, d[q * 4 + 1]!, d[q * 4 + 2]!);
+    matches = red.matches;
+    at = red.at;
+  } else if (p.panel && bg < 0) bg = argmax(hist);
   lap('reduce');
-  if (!crop || !(settings.details > 0) || p.minWpx <= 1) return { l, hist, bg, crop };
+  if (!crop || !(settings.details > 0) || p.minWpx <= 1) return { l, hist, bg, crop, matches };
   const d = crop.img.data;
   const raw = new Int16Array(l.labels.length).fill(-1);
   for (let q = 0; q < raw.length; q++)
-    if (l.labels[q]! >= 0) raw[q] = red.map[p.nearest(d[q * 4]!, d[q * 4 + 1]!, d[q * 4 + 2]!)]!;
+    if (l.labels[q]! >= 0) raw[q] = at(d[q * 4]!, d[q * 4 + 1]!, d[q * 4 + 2]!);
   const dominant = p.panel ? bg : dominantLabel(l, palette.length);
   const restored = restoreThinStrokes(l, raw, dominant, p.minWpx, settings.details, {
     labs: p.labs,
@@ -178,7 +196,7 @@ export function labelStage(
     ...(detailsCache ? { cache: detailsCache } : {}),
   });
   lap('details');
-  return { l: restored.l, hist, bg, crop, restored: restored.changed };
+  return { l: restored.l, hist, bg, crop, matches, restored: restored.changed };
 }
 
 /** Index of the largest count (ties: lower index); 0 when all counts are 0. */

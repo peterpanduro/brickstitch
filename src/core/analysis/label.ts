@@ -51,7 +51,7 @@ export function workingCrop(
  * pixel with coverage `alpha / 255`. With `unmix`, a foreground pixel 4-adjacent to background
  * is unmixed against the background colour (label = fitted colour, coverage × t) unless a
  * non-edge foreground neighbour has the same nearest colour (keeps genuine flat regions). Also
- * returns the palette histogram.
+ * returns the palette histogram, the denoised RGBA data and which pixels were unmixed.
  */
 export function labelPixels(
   img: RgbaImage,
@@ -59,7 +59,7 @@ export function labelPixels(
   nearest: NearestFn,
   detail: readonly boolean[],
   unmix: UnmixFn | null = null,
-): LabelImage & { hist: number[] } {
+): LabelImage & { hist: number[]; den: Uint8ClampedArray; blend: Uint8Array } {
   const { width: w, height: h } = img;
   const n = mask.data.length;
   const d = img.data;
@@ -75,6 +75,7 @@ export function labelPixels(
     labels[p] = nearest(den[p * 4]!, den[p * 4 + 1]!, den[p * 4 + 2]!);
     cover[p] = d[p * 4 + 3]! / 255;
   }
+  const blend = new Uint8Array(n);
   if (unmix) {
     const nb = (p: number): number[] => {
       const x = p % w;
@@ -96,13 +97,14 @@ export function labelPixels(
       const u = unmix(den[p * 4]!, den[p * 4 + 1]!, den[p * 4 + 2]!);
       if (!u) continue;
       out[p] = u.label;
+      blend[p] = 1;
       cover[p] = cover[p]! * u.t;
     }
     labels.set(out);
   }
   const hist = new Array<number>(detail.length).fill(0);
   for (let p = 0; p < n; p++) if (labels[p]! >= 0) hist[labels[p]!]!++;
-  return { labels, cover, hist, w, h };
+  return { labels, cover, hist, w, h, den, blend };
 }
 
 /** A cropped label image and the offset of its top-left pixel in the uncropped one. */
