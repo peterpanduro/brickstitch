@@ -71,7 +71,7 @@ describe('autoDetail guards (R59.4)', () => {
       for (let y = y0; y < y0 + mh; y++) for (let x = x0; x < x0 + mw; x++) l[y * w + x] = 1;
     return l;
   };
-  const guard = { flat: new Uint8Array(w * w).fill(1), width: w, minArea: 9 };
+  const guard = { flat: new Uint8Array(w * w).fill(1), width: w, minArea: 9, minPixels: 0 };
   const pair = [hexToLab('#ffffff'), hexToLab('#000000')];
 
   it('flags a compact mark and not scattered single-pixel specks', () => {
@@ -99,5 +99,25 @@ describe('autoDetail guards (R59.4)', () => {
   it('does not count edge blends as a mark', () => {
     const edge = { ...guard, flat: new Uint8Array(w * w) };
     expect(autoDetail(grid([[10, 10, 4, 4]]), pair, [false, false], edge)[1]).toBe(false);
+  });
+
+  it('qualifies a one-bead eye on a large pattern by its bead area, not its image share', () => {
+    const big = 1200;
+    const l = new Int16Array(big * big);
+    for (let y = 600; y < 612; y++) for (let x = 600; x < 612; x++) l[y * big + x] = 1;
+    const g = { flat: new Uint8Array(big * big).fill(1), width: big, minArea: 9, minPixels: 36 };
+    expect(autoDetail(l, pair, [false, false], g)[1]).toBe(true);
+    expect(autoDetail(l, pair, [false, false], { ...g, minPixels: 400 })[1]).toBe(false);
+  });
+
+  it('copes with a tiny working image: a 2 px dot counts, a 1 px dot does not', () => {
+    const small = (n: number): Int16Array => {
+      const l = new Int16Array(w * w);
+      for (let i = 0; i < n; i++) l[20 * w + 20 + i] = 1;
+      return l;
+    };
+    const g = { ...guard, minArea: 2, minPixels: 2 };
+    expect(autoDetail(small(2), pair, [false, false], g)[1]).toBe(true);
+    expect(autoDetail(small(1), pair, [false, false], g)[1]).toBe(false);
   });
 });

@@ -23,6 +23,8 @@ export interface RasteriseInput {
   readonly detailThreshold: number;
   /** Detail flag per colour index. */
   readonly detail: readonly boolean[];
+  /** With it, only pixels set to 1 count towards a detail colour's priority (others still vote for the majority). */
+  readonly detailPixels?: Uint8Array;
 }
 
 /**
@@ -37,6 +39,7 @@ export function rasterise(o: RasteriseInput): IndexGrid {
   const ss = o.supersample;
   const n2 = ss * ss;
   const votes = new Float64Array(detail.length);
+  const solid = o.detailPixels ? new Float64Array(detail.length) : votes;
   const inv = 1 / fit.mmPerPx;
   const invY = 1 / fit.mmPerPxY;
   const cells: IndexGrid = [];
@@ -50,6 +53,7 @@ export function rasterise(o: RasteriseInput): IndexGrid {
     for (let i = 0; i < rowLength(o.width, r); i++) {
       const left = i * bw + (r & 1) * (bw / 2);
       votes.fill(0);
+      if (solid !== votes) solid.fill(0);
       let fg = 0;
       for (let b = 0; b < ss; b++) {
         const Y = Math.floor((top + ((b + 0.5) / ss) * bh - fit.oy) * invY);
@@ -62,17 +66,23 @@ export function rasterise(o: RasteriseInput): IndexGrid {
           if (k < 0) continue;
           fg += cover[p]!;
           votes[k] = votes[k]! + weights[p]!;
+          if (solid !== votes && o.detailPixels![p]) solid[k] = solid[k]! + weights[p]!;
         }
       }
-      row.push(fg / n2 < o.coverage ? -1 : pick(votes, detail, o.detailThreshold * n2));
+      row.push(fg / n2 < o.coverage ? -1 : pick(votes, solid, detail, o.detailThreshold * n2));
     }
     cells.push(row);
   }
   return cells;
 }
 
-function pick(votes: Float64Array, detail: readonly boolean[], detailMin: number): number {
-  for (let k = 0; k < votes.length; k++) if (detail[k] && votes[k]! >= detailMin) return k;
+function pick(
+  votes: Float64Array,
+  solid: Float64Array,
+  detail: readonly boolean[],
+  detailMin: number,
+): number {
+  for (let k = 0; k < votes.length; k++) if (detail[k] && solid[k]! >= detailMin) return k;
   let best = -1;
   let bestV = 0;
   for (let k = 0; k < votes.length; k++)

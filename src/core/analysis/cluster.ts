@@ -31,7 +31,8 @@ export interface ClusterOptions {
 }
 
 const BITS = 5;
-const MAX_BINS = 1000;
+const MAX_BINS = 1500;
+const MIN_BITS = 4;
 const PIN_RADIUS2 = 20 * 20;
 
 const dist2 = (a: Lab, b: Lab): number => (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2;
@@ -66,7 +67,7 @@ function histogram(data: Uint8ClampedArray, weight: ArrayLike<number>): Bins {
   }
   let bits = BITS;
   const occupied = (c: Float64Array): number => c.reduce((a, x) => a + (x > 0 ? 1 : 0), 0);
-  while (bits > 1 && occupied(cnt) > MAX_BINS) {
+  while (bits > MIN_BITS && occupied(cnt) > MAX_BINS) {
     const nb = bits - 1;
     const next = 1 << (3 * nb);
     const c2 = new Float64Array(next);
@@ -88,11 +89,16 @@ function histogram(data: Uint8ClampedArray, weight: ArrayLike<number>): Bins {
     [cnt, sr, sg, sb] = [c2, r2, g2, b2];
     bits = nb;
   }
+  let floor = 0;
+  if (occupied(cnt) > MAX_BINS)
+    floor = Array.from(cnt)
+      .filter((x) => x > 0)
+      .sort((a, b) => b - a)[MAX_BINS - 1]!;
   const binOf = new Int32Array(cnt.length).fill(-1);
   const n: number[] = [];
   const lab: Lab[] = [];
   for (let i = 0; i < cnt.length; i++) {
-    if (!(cnt[i]! > 0)) continue;
+    if (!(cnt[i]! > 0) || cnt[i]! < floor || n.length >= MAX_BINS) continue;
     binOf[i] = n.length;
     n.push(cnt[i]!);
     lab.push(rgbToLab([sr[i]! / cnt[i]!, sg[i]! / cnt[i]!, sb[i]! / cnt[i]!]));
@@ -102,7 +108,7 @@ function histogram(data: Uint8ClampedArray, weight: ArrayLike<number>): Bins {
 
 /**
  * Clusters the colours of the pixels with positive `weight` (RGBA `data`): the colours go into
- * a histogram of RGB cells (coarsened to at most 1000 occupied cells), and cells merge by
+ * a histogram of RGB cells (coarsened to at most 1500 occupied cells, never below 4 bits (cells 16 wide), and the smallest cells beyond 1500 left out), and cells merge by
  * Ward's rule until `k` clusters remain, so shades of one colour merge before a small distinct
  * colour is lost. The cost is `√(nₐ·n_b/(nₐ+n_b))·ΔE76²` between centroids: the square root of
  * Ward's count weight keeps a large smooth gradient from outweighing two small colours that

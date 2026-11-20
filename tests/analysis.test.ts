@@ -258,6 +258,20 @@ describe('reduceColours', () => {
     expect(new Set(spare.matches.map((m) => m.index)).size).toBe(1);
   });
 
+  it('lets the pinned background absorb a distinct small colour when slots run out', () => {
+    const r = run(
+      [
+        ['#808080', 300],
+        ['#000000', 300],
+        ['#d02020', 10],
+      ],
+      { maxColors: 2, pinned: 1 },
+    );
+    const used = [r.at(0x80, 0x80, 0x80), r.at(0, 0, 0), r.at(0xd0, 0x20, 0x20)];
+    expect(used[0]).toBe(1);
+    expect(new Set(used).size).toBe(2);
+  });
+
   it('is deterministic', () => {
     const specs = [
       ['#ffffff', 400],
@@ -343,6 +357,26 @@ describe('rasterise', () => {
       detailThreshold: 0.3,
     });
     expect(cells[0]).toEqual([0, 1, 0]);
+  });
+
+  it('gives detail priority only to the pixels marked in detailPixels', () => {
+    const { labels, weights, w, h } = raster(36);
+    const run = (detailPixels: Uint8Array): number[] | undefined =>
+      rasterise({
+        ...base,
+        labels,
+        weights,
+        cover: weights,
+        imgW: w,
+        imgH: h,
+        fit,
+        detail: [false, true],
+        detailThreshold: 0.3,
+        detailPixels,
+      })[0];
+    const solid = new Uint8Array(w * h).fill(1);
+    expect(run(solid)).toEqual([0, 1, 0]);
+    expect(run(new Uint8Array(w * h))).toEqual([0, 0, 0]);
   });
 
   it('uses the majority below detailThreshold', () => {

@@ -137,7 +137,26 @@ describe('clusterColours', () => {
     const t0 = performance.now();
     const c = clusterColours(data, new Uint8Array(w * w).fill(1), { k: 6 });
     expect(c.clusters).toHaveLength(6);
-    expect(c.max).toBeLessThanOrEqual(1000);
+    expect(c.max).toBeLessThanOrEqual(1500);
     expect(performance.now() - t0).toBeLessThan(400);
+  });
+
+  it('keeps cells at 16 RGB units or finer, so a small dark mark is not averaged into shadows', () => {
+    const w = 600;
+    const data = new Uint8ClampedArray(w * w * 4);
+    let seed = 7;
+    const rnd = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    for (let y = 0; y < w; y++)
+      for (let x = 0; x < w; x++) {
+        const dark = x < 12 && y < 12;
+        const v = dark ? 8 : 60 + (x / w) * 120;
+        data.set(
+          [v + (rnd() - 0.5) * 90, v + (rnd() - 0.5) * 90, v + (rnd() - 0.5) * 90, 255],
+          (y * w + x) * 4,
+        );
+      }
+    const c = clusterColours(data, new Uint8Array(w * w).fill(1), { k: 5 });
+    expect(c.max).toBeGreaterThan(1000);
+    expect(Math.min(...c.cut(c.max).clusters.map((x) => x.lab.L))).toBeLessThan(25);
   });
 });

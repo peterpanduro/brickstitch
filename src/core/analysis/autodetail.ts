@@ -13,6 +13,8 @@ export interface DetailGuard {
   readonly width: number;
   /** Smallest connected area (px) that counts as a mark and not as a rim or noise. */
   readonly minArea: number;
+  /** Smallest pixel count of a colour, as a bead area at the working scale. */
+  readonly minPixels: number;
 }
 
 /** Share of each colour's flat pixels that lie in connected areas of at least `minArea` px. */
@@ -47,7 +49,7 @@ function compactness(labels: Int16Array, n: number, g: DetailGuard): number[] {
 
 /**
  * Auto-detail (SPEC §5.4, R59.4): when no colour is flagged as detail, a colour that is more than
- * ΔE2000 40 from the dominant colour and has between 0.05 % and 15 % of the labelled pixels gets
+ * ΔE2000 40 from the dominant colour and has under 15 % of the labelled pixels and at least `guard.minPixels` of them (0.05 % without a guard) gets
  * detail priority, so small contrasting marks (eyes, a red comb) win their beads. With a
  * `guard`, at least half of the colour's flat pixels must also lie in connected areas of at
  * least `guard.minArea` px, so rims, edge blends and noise are not marks. Returns `userDetail`
@@ -75,7 +77,7 @@ export function autoDetail(
   const solid = guard ? compactness(labels, labs.length, guard) : null;
   return count.map(
     (n, k) =>
-      n >= MIN_SHARE * total &&
+      (guard ? n >= guard.minPixels : n >= MIN_SHARE * total) &&
       n < MAX_SHARE * total &&
       deltaE2000(labs[k]!, labs[dominant]!) > MIN_DISTANCE &&
       (solid === null || solid[k]! >= COMPACT),

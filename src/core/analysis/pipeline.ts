@@ -146,6 +146,7 @@ export function analyseImage(
     restored,
     matches,
     detail: rasterDetail,
+    flat,
   } = labelStage(prep, palette, settings, lap, deps.detailsCache);
   const labelT: DebugTransform =
     deps.debug && box && crop
@@ -182,6 +183,16 @@ export function analyseImage(
     palette,
     fill: panel ? palette[bg]!.id : null,
   });
+  const flatFor = (src: LabelImage): Uint8Array => {
+    const out = new Uint8Array(src.w * src.h);
+    for (let y = 0; y < src.h; y++)
+      for (let x = 0; x < src.w; x++) {
+        const sx = x + thick.x0;
+        const sy = y + thick.y0;
+        if (sx >= 0 && sx < l.w && sy >= 0 && sy < l.h) out[y * src.w + x] = flat![sy * l.w + sx]!;
+      }
+    return out;
+  };
   const raster = (src: LabelImage, priority = rasterDetail): IndexGrid =>
     rasterise({
       labels: src.labels,
@@ -197,6 +208,7 @@ export function analyseImage(
       coverage: settings.coverage,
       detailThreshold,
       detail: priority,
+      ...(flat && priority === rasterDetail ? { detailPixels: flatFor(src) } : {}),
     });
   lap('thicken');
   let cells: IndexGrid = raster(thick);

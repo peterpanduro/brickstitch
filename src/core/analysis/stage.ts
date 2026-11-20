@@ -138,6 +138,8 @@ export interface Labelled {
   readonly crop: { readonly img: RgbaImage; readonly pad: number } | null;
   /** How well each palette entry matches the picture colours it stands in for (R59.5). */
   readonly matches: readonly ColourMatch[];
+  /** Foreground pixels that are not edge blends (auto-detail only; `null` otherwise), on the label grid. */
+  readonly flat: Uint8Array | null;
   /** Detail priority per colour for rasterising: the user's flags, else auto-detail (R59.4). */
   readonly detail: readonly boolean[];
 }
@@ -194,10 +196,18 @@ export function labelStage(
     l.labels,
     p.labs,
     p.detail,
-    flat ? { flat, width: l.w, minArea: Math.max(4, (p.minWpx / 2) ** 2) } : undefined,
+    flat
+      ? {
+          flat,
+          width: l.w,
+          minArea: Math.max(2, Math.min((p.minWpx / 2) ** 2, 0.25 * p.pxPerBead ** 2)),
+          minPixels: Math.max(2, 0.25 * p.pxPerBead ** 2),
+        }
+      : undefined,
   );
+  const autoFlat = detail === p.detail ? null : flat;
   if (!crop || !(settings.details > 0) || p.minWpx <= 1)
-    return { l, hist, bg, crop, matches, detail };
+    return { l, hist, bg, crop, matches, detail, flat: autoFlat };
   const d = crop.img.data;
   const raw = new Int16Array(l.labels.length).fill(-1);
   for (let q = 0; q < raw.length; q++)
@@ -209,7 +219,16 @@ export function labelStage(
     ...(detailsCache ? { cache: detailsCache } : {}),
   });
   lap('details');
-  return { l: restored.l, hist, bg, crop, matches, detail, restored: restored.changed };
+  return {
+    l: restored.l,
+    hist,
+    bg,
+    crop,
+    matches,
+    detail,
+    flat: autoFlat,
+    restored: restored.changed,
+  };
 }
 
 /** Index of the largest count (ties: lower index); 0 when all counts are 0. */
