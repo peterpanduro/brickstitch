@@ -1,7 +1,7 @@
 import { BEAD_TYPES } from '../geometry';
 import { boundingBox } from '../imaging/crop';
 import type { Box, Mask, RgbaImage } from '../imaging/types';
-import { hexToLab } from '../palette/color';
+import { hexToLab, hexToRgb } from '../palette/color';
 import type { Lab, PaletteEntry } from '../palette/types';
 import { restoreThinStrokes, type DetailsCache } from './details';
 import { computeFit } from './fit';
@@ -136,7 +136,7 @@ export interface Labelled {
   readonly restored?: Uint8Array;
   /** Working crop (padded), `null` without foreground. */
   readonly crop: { readonly img: RgbaImage; readonly pad: number } | null;
-  /** How well each colour cluster of the image is matched by its palette entry (R59.5). */
+  /** How well each palette entry matches the picture colours it stands in for (R59.5). */
   readonly matches: readonly ColourMatch[];
   /** Detail priority per colour for rasterising: the user's flags, else auto-detail (R59.4). */
   readonly detail: readonly boolean[];
@@ -155,6 +155,7 @@ export function labelStage(
   let hist = new Array<number>(palette.length).fill(0);
   let matches: readonly ColourMatch[] = [];
   let at: Reduction['at'] = () => -1;
+  let flat: Uint8Array | null = null;
   let bg = p.bg;
   if (p.box) {
     const pad = p.minWpx > 1 ? Math.ceil(p.minWpx / 2) + 2 : 1;
@@ -173,6 +174,7 @@ export function labelStage(
       blend: labelled.blend,
       detail: p.detail,
       labs: p.labs,
+      rgbs: palette.map((e) => hexToRgb(e.hex)),
       nearest: p.nearest,
       maxColors: settings.maxColors,
       ...(bg >= 0 ? { pinned: bg } : {}),
@@ -184,10 +186,16 @@ export function labelStage(
           ? red.ofEntry(l.labels[q]!)
           : red.at(d[q * 4]!, d[q * 4 + 1]!, d[q * 4 + 2]!);
     matches = red.matches;
+    flat = red.flat;
     at = red.at;
   } else if (p.panel && bg < 0) bg = argmax(hist);
   lap('reduce');
-  const detail = autoDetail(l.labels, p.labs, p.detail);
+  const detail = autoDetail(
+    l.labels,
+    p.labs,
+    p.detail,
+    flat ? { flat, width: l.w, minArea: Math.max(4, (p.minWpx / 2) ** 2) } : undefined,
+  );
   if (!crop || !(settings.details > 0) || p.minWpx <= 1)
     return { l, hist, bg, crop, matches, detail };
   const d = crop.img.data;

@@ -62,3 +62,42 @@ describe('analyseImage with auto-detail', () => {
     expect(dots([WHITE, BLACK, { ...RED, detail: true }])).toBe(0);
   });
 });
+
+describe('autoDetail guards (R59.4)', () => {
+  const w = 40;
+  const grid = (marks: readonly (readonly [number, number, number, number])[]): Int16Array => {
+    const l = new Int16Array(w * w);
+    for (const [x0, y0, mw, mh] of marks)
+      for (let y = y0; y < y0 + mh; y++) for (let x = x0; x < x0 + mw; x++) l[y * w + x] = 1;
+    return l;
+  };
+  const guard = { flat: new Uint8Array(w * w).fill(1), width: w, minArea: 9 };
+  const pair = [hexToLab('#ffffff'), hexToLab('#000000')];
+
+  it('flags a compact mark and not scattered single-pixel specks', () => {
+    expect(autoDetail(grid([[10, 10, 4, 4]]), pair, [false, false], guard)[1]).toBe(true);
+    const specks = grid([
+      [2, 2, 1, 1],
+      [9, 5, 1, 1],
+      [20, 30, 1, 1],
+      [33, 12, 1, 1],
+      [5, 25, 1, 1],
+      [30, 3, 1, 1],
+      [14, 18, 1, 1],
+      [27, 22, 1, 1],
+    ]);
+    expect(autoDetail(specks, pair, [false, false])[1]).toBe(true);
+    expect(autoDetail(specks, pair, [false, false], guard)[1]).toBe(false);
+  });
+
+  it('ignores a colour under 0.05 % of the pixels', () => {
+    const l = new Int16Array(10000).fill(0);
+    l[5] = 1;
+    expect(autoDetail(l, pair, [false, false])[1]).toBe(false);
+  });
+
+  it('does not count edge blends as a mark', () => {
+    const edge = { ...guard, flat: new Uint8Array(w * w) };
+    expect(autoDetail(grid([[10, 10, 4, 4]]), pair, [false, false], edge)[1]).toBe(false);
+  });
+});

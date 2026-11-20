@@ -61,16 +61,16 @@ export interface AnalysisStats {
   readonly ringsReplaced: number;
   /** Replaced rings: lattice cells, width, fitted centre (lattice-local mm), beads pruned. */
   readonly rings: readonly AnalysisRing[];
-  /** How well each colour cluster of the image is matched by its palette entry (R59.5). */
+  /** How well each palette entry matches the picture colours it stands in for, one per entry (R59.5). */
   readonly colourMatches: readonly AnalysisColourMatch[];
   /** Milliseconds per stage, in pipeline order. */
   readonly timings: Readonly<Record<string, number>>;
 }
 
-/** Match of one colour cluster of the image to a palette entry (R59.5). */
+/** Match of a palette entry to the picture colours that map to it (R59.5). */
 export interface AnalysisColourMatch {
   readonly colorId: ColorId;
-  /** ΔE2000 between the cluster's average colour and the entry. */
+  /** ΔE2000 from the entry to the average colour of its clusters, weighted by share. */
   readonly deltaE: number;
   /** Share of the clustered foreground pixels, 0..1. */
   readonly share: number;

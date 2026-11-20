@@ -32,6 +32,15 @@ describe('matchEntry (R59.5)', () => {
     expect(m.deltaE).toBeGreaterThan(15);
   });
 
+  it('keeps a close low-chroma pink instead of jumping to a far same-hue entry', () => {
+    const lab = rgbToLab([205, 160, 160]);
+    const pinkish = hexToLab('#b8a8a8');
+    const set = [pinkish, ...labs];
+    const m = matchEntry(lab, set);
+    expect(m.index).toBe(0);
+    expect(m.deltaE).toBeLessThan(10);
+  });
+
   it('ignores entries of another hue', () => {
     const only = [labs[0]!, labs[4]!];
     expect(matchEntry(rgbToLab([190, 60, 120]), only).index).toBe(0);

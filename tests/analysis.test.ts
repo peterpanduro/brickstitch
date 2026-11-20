@@ -86,25 +86,28 @@ describe('reduceColours', () => {
   const nearest = makeNearest(labs);
 
   function run(
-    specs: readonly (readonly [string, number])[],
+    specs: readonly (readonly [string, number, number?])[],
     o: { maxColors: number; pinned?: number; palette?: PaletteEntry[] },
   ): ReturnType<typeof reduceColours> {
     const palette = o.palette ?? pal;
     const n = specs.reduce((a, [, c]) => a + c, 0);
     const data = new Uint8ClampedArray(n * 4);
     const labels = new Int16Array(n);
+    const blend = new Uint8Array(n);
     let p = 0;
-    for (const [hex, c] of specs)
+    for (const [hex, c, fitted] of specs)
       for (let i = 0; i < c; i++, p++) {
         const [r, g, b] = hexToRgb(hex);
         data.set([r, g, b, 255], p * 4);
-        labels[p] = nearest(r, g, b);
+        labels[p] = fitted ?? nearest(r, g, b);
+        blend[p] = fitted === undefined ? 0 : 1;
       }
     return reduceColours({
       data,
       labels,
       width: n,
-      blend: new Uint8Array(n),
+      blend,
+      rgbs: palette.map((e) => hexToRgb(e.hex)),
       detail: palette.map((e) => !!e.detail),
       labs: palette.map((e) => hexToLab(e.hex)),
       nearest,
@@ -150,6 +153,33 @@ describe('reduceColours', () => {
       { maxColors: 3 },
     );
     expect(r.matches.map((m) => m.index).sort()).toEqual([0, 2]);
+  });
+
+  it('keeps a 1-px black outline that only has unmixed edge pixels', () => {
+    const r = run(
+      [
+        ['#ffffff', 400],
+        ['#707070', 40, 2],
+      ],
+      { maxColors: 3 },
+    );
+    expect(r.matches.map((m) => m.index)).toContain(2);
+    expect(r.ofEntry(2)).toBe(2);
+  });
+
+  it('spends a slot freed by two clusters on one entry', () => {
+    const pal3 = [W, K, R];
+    const r = run(
+      [
+        ['#ffffff', 300],
+        ['#c4c4c4', 300],
+        ['#e4e4e4', 300],
+        ['#000000', 300],
+        ['#d02020', 300],
+      ],
+      { maxColors: 3, palette: pal3 },
+    );
+    expect(new Set(r.matches.map((m) => m.index)).size).toBe(3);
   });
 
   it('keeps a thin line of a third colour between two others', () => {
@@ -209,8 +239,14 @@ describe('reduceColours', () => {
       ],
       { maxColors: 2, pinned: 1 },
     );
-    expect(r.matches.map((m) => m.index)).toContain(1);
-    expect(new Set(r.matches.map((m) => m.index)).size).toBeLessThanOrEqual(2);
+    expect(r.at(0x80, 0x80, 0x80)).toBe(1);
+    const used = [
+      [0x80, 0x80, 0x80],
+      [0, 0, 0],
+      [0xd0, 0x20, 0x20],
+      [0x20, 0x40, 0xd0],
+    ].map(([a, b, c]) => r.at(a!, b!, c!));
+    expect(new Set(used).size).toBeLessThanOrEqual(2);
     const spare = run(
       [
         ['#000000', 200],

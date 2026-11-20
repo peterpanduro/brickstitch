@@ -85,4 +85,59 @@ describe('clusterColours', () => {
     const c = clusterColours(new Uint8ClampedArray(0), new Uint8Array(0), { k: 3 });
     expect(c.clusters).toHaveLength(0);
   });
+
+  it('can undo merges: cut(k) is the clustering at k and agrees with a direct run', () => {
+    const { data, include } = image(shades);
+    const c = clusterColours(data, include, { k: 3 });
+    expect(c.max).toBe(6);
+    expect(c.cut(5).clusters).toHaveLength(5);
+    expect(c.cut(3).clusters).toEqual(c.clusters);
+    expect(c.cut(99).clusters).toHaveLength(6);
+    expect(c.cut(1).clusters).toHaveLength(1);
+  });
+
+  it('keeps the pinned centroid at its own pixels when others merge into it', () => {
+    const { data, include } = image([
+      ['#606060', 100],
+      ['#686868', 30],
+      ['#d02020', 20],
+    ]);
+    const c = clusterColours(data, include, { k: 2, pin: rgbToLab([0x60, 0x60, 0x60]) });
+    const pinned = c.clusters.find((x) => x.pinned)!;
+    expect(pinned.count).toBe(130);
+    expect(pinned.lab.L).toBeCloseTo(rgbToLab([0x60, 0x60, 0x60]).L, 0);
+  });
+
+  it('assigns colours independently of the order of earlier calls', () => {
+    const { data, include } = image(shades);
+    const a = clusterColours(data, include, { k: 3 });
+    const b = clusterColours(data, include, { k: 3 });
+    const probes: [number, number, number][] = [
+      [0x31, 0x2f, 0x33],
+      [0x70, 0x71, 0x72],
+      [0xd2, 0x10, 0x40],
+      [0x33, 0x33, 0x33],
+    ];
+    const fwd = probes.map((q) => a.assign(...q));
+    const back = [...probes].reverse().map((q) => b.assign(...q));
+    expect(fwd).toEqual(back.reverse());
+  });
+
+  it('stays fast on a noisy full-colour gradient', () => {
+    const w = 800;
+    const data = new Uint8ClampedArray(w * w * 4);
+    let seed = 1;
+    const rnd = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    for (let y = 0; y < w; y++)
+      for (let x = 0; x < w; x++)
+        data.set(
+          [(x / w) * 255 + (rnd() - 0.5) * 40, (y / w) * 255 + (rnd() - 0.5) * 40, 128, 255],
+          (y * w + x) * 4,
+        );
+    const t0 = performance.now();
+    const c = clusterColours(data, new Uint8Array(w * w).fill(1), { k: 6 });
+    expect(c.clusters).toHaveLength(6);
+    expect(c.max).toBeLessThanOrEqual(1000);
+    expect(performance.now() - t0).toBeLessThan(400);
+  });
 });

@@ -66,8 +66,8 @@ const both =
     s.map((f) => f(px, py, r)).find((v) => v !== undefined);
 
 /** Black beads in the left half and in the rightmost fifth of the pattern's bounding box. */
-function blackCells(img: RgbaImage): { left: number; right: number } {
-  const cells = analyseImage(img, target, PAL, { ...DEFAULT_SETTINGS, ...settings }).pattern.cells;
+function blackCells(img: RgbaImage, pal = PAL): { left: number; right: number } {
+  const cells = analyseImage(img, target, pal, { ...DEFAULT_SETTINGS, ...settings }).pattern.cells;
   const xs = cells.flatMap((r) => r.flatMap((c, x) => (c !== null ? [x] : [])));
   const x0 = Math.min(...xs);
   const span = Math.max(...xs) - x0 + 1;
@@ -99,6 +99,12 @@ describe('outline continuity (R59.2)', () => {
     const b = blackCells(render(both(contour(), strand(30))));
     expect(b.left).toBeGreaterThan(25);
     expect(b.right).toBeLessThanOrEqual(6);
+  });
+  it('the whisker gets one more bead only from auto-detail priority, not from outline growth', () => {
+    const flagged = [...PAL, { id: 'r', hex: '#d02020', detail: true }];
+    const img = render(both(contour(), strand(30)));
+    expect(blackCells(img, flagged).right).toBeLessThanOrEqual(5);
+    expect(blackCells(img).right).toBeLessThanOrEqual(blackCells(img, flagged).right + 1);
   });
   it('grows a short but real outline', () => {
     const arc: Scene = (px, py, r) =>

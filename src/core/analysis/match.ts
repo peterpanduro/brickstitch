@@ -22,7 +22,7 @@ export interface EntryMatch {
 /**
  * Entry for a cluster centroid (SPEC R59.5): the nearest by ΔE2000, except that a saturated
  * cluster (chroma ≥ 20) whose nearest entry is near-neutral (chroma < 12) takes the nearest
- * entry of the same hue (within 45°, chroma ≥ 12) when one is within ΔE2000 30. The distance
+ * entry of the same hue (within 45°, chroma ≥ 12) when one is within ΔE2000 30 and at most max(2·d, d+10) for the nearest entry's distance d. The distance
  * reported is always to the entry returned.
  * @throws if `labs` is empty
  */
@@ -32,10 +32,11 @@ export function matchEntry(lab: Lab, labs: readonly Lab[]): EntryMatch {
   let index = best;
   let deltaE = deltaE2000(lab, labs[best]!);
   if (chroma(lab) >= SATURATED && chroma(labs[best]!) < NEUTRAL) {
+    const limit = Math.min(LOOSE_DISTANCE, Math.max(2 * deltaE, deltaE + 10));
     labs.forEach((e, i) => {
       if (chroma(e) < NEUTRAL || hueGap(lab, e) > HUE_TOLERANCE) return;
       const d = deltaE2000(lab, e);
-      if (d <= LOOSE_DISTANCE && (index === best || d < deltaE)) {
+      if (d <= limit && (index === best || d < deltaE)) {
         index = i;
         deltaE = d;
       }
