@@ -9,7 +9,9 @@ src/core/        pure TS, no DOM (geometry, pattern, palette, feasibility, instr
                  scene, imaging, analysis, persist, i18n, ring); imports only from src/core
   analysis/      image → pattern pipeline (stage, pipeline, thicken, details = Details slider,
                  debug = layers for the processed import picture, ring-fix, cluster + reduce = R59.3
-                 palette reduction, ...)
+                 palette reduction, match = R59.5 hue-preserving entry match, autodetail = R59.4, ...)
+  imaging/       pixel primitives; borderKey + keying = R59.1 multi-seed adaptive background keying,
+                 specks = speck removal
 src/export-pdf/  Analysis + Scene + i18n -> PDF bytes (jsPDF, Helvetica/WinAnsi, runs in node);
                  content.ts (texts), draw.ts (scene shapes), crop.ts (motif crop, diagram paging),
                  page.ts (page flow helpers), rows.ts (row list columns), render.ts, winansi.ts
