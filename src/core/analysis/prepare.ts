@@ -82,6 +82,31 @@ function keySeeds(
   );
 }
 
+/** Share of a side that foreground must cover for the side to count as touched. */
+export const SIDE_RUN_SHARE = 0.03;
+
+/**
+ * Whether `fg` covers at least `share` of the pixels of both left and right edges, or of both top
+ * and bottom edges: a keyed background should surround the motif, so streaks reaching opposite
+ * sides mean the key failed (a streak thinner than `share` of the side is noise).
+ */
+export function spansOppositeSides(fg: Mask, share: number): boolean {
+  const { width: w, height: h, data } = fg;
+  let l = 0;
+  let r = 0;
+  let t = 0;
+  let b = 0;
+  for (let y = 0; y < h; y++) {
+    l += data[y * w]!;
+    r += data[y * w + w - 1]!;
+  }
+  for (let x = 0; x < w; x++) {
+    t += data[x]!;
+    b += data[(h - 1) * w + x]!;
+  }
+  return (l >= share * h && r >= share * h) || (t >= share * w && b >= share * w);
+}
+
 /** Whether a keyed foreground is a plausible motif: empty, or not just slivers. */
 function plausible(fg: Mask): boolean {
   if (maskCount(fg) === 0) return true;
@@ -128,7 +153,8 @@ export function foregroundMask(
   );
   const covered = plan.used.reduce((n, k) => n + k.share, 0);
   const quiet = plan.used.length === 1 && plan.used[0]!.cap <= QUIET_CAP;
-  if (auto && (covered < AUTO_BORDER_SHARE || (!quiet && !plausible(planned))))
+  const streaks = plan.used.length > 1 && spansOppositeSides(planned, SIDE_RUN_SHARE);
+  if (auto && (covered < AUTO_BORDER_SHARE || streaks || (!quiet && !plausible(planned))))
     return wholeImage('none');
   const mask =
     small === img

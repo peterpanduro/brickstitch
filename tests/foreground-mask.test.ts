@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/core/analysis';
-import { foregroundMask } from '../src/core/analysis/prepare';
-import { maskCount, type RgbaImage } from '../src/core/imaging';
+import { foregroundMask, spansOppositeSides } from '../src/core/analysis/prepare';
+import { createMask, maskCount, type RgbaImage } from '../src/core/imaging';
 
 type Rgb = readonly [number, number, number];
 
@@ -125,5 +125,33 @@ describe('foregroundMask background removal (R59.1)', () => {
     const beaded = foregroundMask(img, DEFAULT_SETTINGS, 30 * 34);
     expect(beaded.mask.data[22 * 400 + 22]).toBe(1);
     expect(beaded.mask.data[10 * 400 + 380]).toBe(0);
+  });
+
+  it('two seeds with a hazy band that leaves streaks reaching both sides resolve to none', () => {
+    const img = image(300, 300, (x, y) => {
+      if (inBox(x, y, 120, 180)) return BIRD;
+      if (y > 140 && y < 156) return [252, 252, 252];
+      return y < 148 ? [58, 138, 198] : [201, 214, 226];
+    });
+    expect(foregroundMask(img, DEFAULT_SETTINGS).mode).toBe('none');
+  });
+
+  it('a single seed may touch opposite sides (snow along the bottom and sides)', () => {
+    const img = image(300, 300, (x, y) =>
+      inBox(x, y, 100, 200) || (y > 100 && y < 160 && (x < 10 || x > 290)) ? BIRD : SNOW,
+    );
+    expect(foregroundMask(img, DEFAULT_SETTINGS).mode).toBe('borderKey');
+  });
+
+  it('spansOppositeSides needs a substantial run on both sides of a pair', () => {
+    const m = createMask(100, 100);
+    for (let x = 0; x < 100; x++) for (let y = 40; y < 46; y++) m.data[y * 100 + x] = 1;
+    expect(spansOppositeSides(m, 0.03)).toBe(true);
+    const thin = createMask(100, 100);
+    for (let x = 0; x < 100; x++) thin.data[50 * 100 + x] = 1;
+    expect(spansOppositeSides(thin, 0.03)).toBe(false);
+    const one = createMask(100, 100);
+    for (let y = 20; y < 80; y++) for (let x = 0; x < 10; x++) one.data[y * 100 + x] = 1;
+    expect(spansOppositeSides(one, 0.03)).toBe(false);
   });
 });
