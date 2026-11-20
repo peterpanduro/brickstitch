@@ -32,7 +32,8 @@ src/ui/          Svelte 5 app: App.svelte (final shell: hash routing, drop overl
     import/      wizard parts: Stepper, StepHead, StepCrop/Background/Colours/Details/Done,
                  PictureCard, PreviewCard, SizeBar, PresetThumbs, RadioCards, Segmented,
                  WordSlider, MoreSettings
-tests/           vitest (tests/ui = UI state logic, incl. tokens.test.ts parsing app.css);
+tests/           vitest (tests/ui = UI state logic, incl. tokens.test.ts parsing app.css;
+                 tests/quality + analysis-quality.test.ts = import benchmark, BENCH_REPORT=1 + --reporter=verbose prints it);
                  tests/fixtures = read-only golden data; tests/adapters.ts = test-only loaders;
                  tests/pdf-text.ts = text of uncompressed PDFs
 e2e/             Playwright specs (not in hooks), one per view/feature + a11y.spec.ts and theme.spec.ts;
