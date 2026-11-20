@@ -82,29 +82,79 @@ function keySeeds(
   );
 }
 
-/** Share of a side that foreground must cover for the side to count as touched. */
-export const SIDE_RUN_SHARE = 0.03;
+/** Share of a side that a foreground part must cover for the side to count as touched. */
+export const SIDE_RUN_SHARE = 0.01;
+
+/** A part spanning both sides with an inscribed radius this wide (share of the short side) is scenery, not a motif. */
+export const MAX_SPAN_INRADIUS = 0.08;
+
+/** Smallest inscribed radius in pixels for a part to count as solid. */
+const MIN_SOLID_RADIUS = 1.5;
 
 /**
- * Whether `fg` covers at least `share` of the pixels of both left and right edges, or of both top
- * and bottom edges: a keyed background should surround the motif, so streaks reaching opposite
- * sides mean the key failed (a streak thinner than `share` of the side is noise).
+ * Whether the foreground looks like streaks reaching opposite sides (R59.1): for the left/right
+ * or the top/bottom pair, parts (8-connected) covering at least `share` of both edges where
+ * either different parts touch the two sides, or one part touches both and is thin (inscribed
+ * radius under {@link MIN_INRADIUS} of the short side) or scenery-wide ({@link MAX_SPAN_INRADIUS}). A keyed background should surround the
+ * motif; one solid part spanning both sides (a bar, wings) is a motif.
  */
 export function spansOppositeSides(fg: Mask, share: number): boolean {
   const { width: w, height: h, data } = fg;
-  let l = 0;
-  let r = 0;
-  let t = 0;
-  let b = 0;
-  for (let y = 0; y < h; y++) {
-    l += data[y * w]!;
-    r += data[y * w + w - 1]!;
+  const label = new Int32Array(w * h);
+  const parts: { suspect: boolean }[] = [];
+  const d = edt(invert(fg));
+  const r = Math.max(MIN_SOLID_RADIUS, MIN_INRADIUS * Math.min(w, h));
+  const stack: number[] = [];
+  for (let s0 = 0; s0 < w * h; s0++) {
+    if (!data[s0] || label[s0]) continue;
+    const id = parts.length + 1;
+    let inner = 0;
+    label[s0] = id;
+    stack.push(s0);
+    while (stack.length) {
+      const p = stack.pop()!;
+      if (d[p]! > inner) inner = d[p]!;
+      const x = p % w;
+      const y = (p - x) / w;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const q = ny * w + nx;
+          if (data[q] && !label[q]) {
+            label[q] = id;
+            stack.push(q);
+          }
+        }
+    }
+    const radius = Math.sqrt(inner);
+    parts.push({ suspect: radius < r || radius >= MAX_SPAN_INRADIUS * Math.min(w, h) });
   }
-  for (let x = 0; x < w; x++) {
-    t += data[x]!;
-    b += data[(h - 1) * w + x]!;
-  }
-  return (l >= share * h && r >= share * h) || (t >= share * w && b >= share * w);
+  const runs = (at: (i: number) => number, n: number): Map<number, number> => {
+    const m = new Map<number, number>();
+    for (let i = 0; i < n; i++) {
+      const id = label[at(i)]!;
+      if (id) m.set(id, (m.get(id) ?? 0) + 1);
+    }
+    for (const [id, c] of m) if (c < share * n) m.delete(id);
+    return m;
+  };
+  const opposite = (a: Map<number, number>, b: Map<number, number>): boolean => {
+    if (!a.size || !b.size) return false;
+    const both = [...a.keys()].filter((id) => b.has(id));
+    return both.length === 0 || both.some((id) => parts[id - 1]!.suspect);
+  };
+  return (
+    opposite(
+      runs((y) => y * w, h),
+      runs((y) => y * w + w - 1, h),
+    ) ||
+    opposite(
+      runs((x) => x, w),
+      runs((x) => (h - 1) * w + x, w),
+    )
+  );
 }
 
 /** Whether a keyed foreground is a plausible motif: empty, or not just slivers. */
@@ -153,18 +203,36 @@ export function foregroundMask(
   );
   const covered = plan.used.reduce((n, k) => n + k.share, 0);
   const quiet = plan.used.length === 1 && plan.used[0]!.cap <= QUIET_CAP;
-  const streaks = plan.used.length > 1 && spansOppositeSides(planned, SIDE_RUN_SHARE);
-  if (auto && (covered < AUTO_BORDER_SHARE || streaks || (!quiet && !plausible(planned))))
-    return wholeImage('none');
-  const mask =
-    small === img
-      ? planned
-      : removeSpecks(
-          keyedMask(img, deltaRgb, plan.used, { ...small, data: plan.bridge }),
-          SPECK_RATIO,
-          beads,
-        );
+  const multi = plan.used.length > 1;
+  const failed = (m: Mask): boolean =>
+    (multi && spansOppositeSides(m, SIDE_RUN_SHARE)) || (!quiet && !plausible(m));
+  if (auto && (covered < AUTO_BORDER_SHARE || failed(planned))) return wholeImage('none');
+  if (small === img) return { mask: planned, mode: 'borderKey' };
+  const mask = removeSpecks(
+    keyedMask(img, deltaRgb, plan.used, {
+      ...small,
+      background: plan.background,
+      bridge: plan.bridge,
+    }),
+    SPECK_RATIO,
+    beads,
+  );
+  if (auto && failed(shrinkMask(mask, KEY_PLAN_SIDE))) return wholeImage('none');
   return { mask, mode: 'borderKey' };
+}
+
+/** Nearest-neighbour downsample of a mask to at most `side` on the long side. */
+function shrinkMask(m: Mask, side: number): Mask {
+  const k = Math.ceil(Math.max(m.width, m.height) / side);
+  if (k <= 1) return m;
+  const out = createMask(
+    Math.max(1, Math.floor(m.width / k)),
+    Math.max(1, Math.floor(m.height / k)),
+  );
+  for (let y = 0; y < out.height; y++)
+    for (let x = 0; x < out.width; x++)
+      out.data[y * out.width + x] = m.data[(y * k + (k >> 1)) * m.width + x * k + (k >> 1)]!;
+  return out;
 }
 
 /** Nearest palette index for an RGB pixel, cached per distinct 24-bit colour. */

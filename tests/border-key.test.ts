@@ -170,7 +170,11 @@ describe('planKeying', () => {
     const seeds = withKey(borderSeeds(img, dist), 2, 4);
     const plan = planKeying(img, dist, seeds);
     expect(plan.used).toHaveLength(2);
-    const fg = keyedMask(img, dist, plan.used, { ...img, data: plan.bridge });
+    const fg = keyedMask(img, dist, plan.used, {
+      ...img,
+      background: plan.background,
+      bridge: plan.bridge,
+    });
     expect(Math.abs(maskCount(fg) - Math.PI * 28 * 28)).toBeLessThan(0.06 * Math.PI * 28 * 28);
     expect(fg.data[80 * 160 + 80]).toBe(1);
   });

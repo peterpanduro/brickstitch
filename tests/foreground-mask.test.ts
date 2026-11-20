@@ -143,15 +143,96 @@ describe('foregroundMask background removal (R59.1)', () => {
     expect(foregroundMask(img, DEFAULT_SETTINGS).mode).toBe('borderKey');
   });
 
-  it('spansOppositeSides needs a substantial run on both sides of a pair', () => {
-    const m = createMask(100, 100);
-    for (let x = 0; x < 100; x++) for (let y = 40; y < 46; y++) m.data[y * 100 + x] = 1;
-    expect(spansOppositeSides(m, 0.03)).toBe(true);
-    const thin = createMask(100, 100);
-    for (let x = 0; x < 100; x++) thin.data[50 * 100 + x] = 1;
-    expect(spansOppositeSides(thin, 0.03)).toBe(false);
+  it('spansOppositeSides: separate parts on opposite sides, or one thin or scenery-wide part', () => {
+    const band = (rows: number, y0 = 40) => {
+      const m = createMask(100, 100);
+      for (let x = 0; x < 100; x++) for (let y = y0; y < y0 + rows; y++) m.data[y * 100 + x] = 1;
+      return m;
+    };
+    expect(spansOppositeSides(band(2), 0.01)).toBe(true);
+    expect(spansOppositeSides(band(12), 0.01)).toBe(false);
+    expect(spansOppositeSides(band(20), 0.01)).toBe(true);
+    const sides = createMask(100, 100);
+    for (let y = 30; y < 60; y++)
+      for (const x of [0, 1, 2, 97, 98, 99]) sides.data[y * 100 + x] = 1;
+    expect(spansOppositeSides(sides, 0.01)).toBe(true);
     const one = createMask(100, 100);
     for (let y = 20; y < 80; y++) for (let x = 0; x < 10; x++) one.data[y * 100 + x] = 1;
-    expect(spansOppositeSides(one, 0.03)).toBe(false);
+    expect(spansOppositeSides(one, 0.01)).toBe(false);
+  });
+});
+
+const box = (m: { width: number; height: number; data: Uint8Array }) => {
+  let x0 = m.width;
+  let x1 = -1;
+  let y0 = m.height;
+  let y1 = -1;
+  for (let p = 0; p < m.data.length; p++)
+    if (m.data[p]) {
+      const x = p % m.width;
+      const y = (p - x) / m.width;
+      x0 = Math.min(x0, x);
+      x1 = Math.max(x1, x);
+      y0 = Math.min(y0, y);
+      y1 = Math.max(y1, y);
+    }
+  return [x0, y0, x1, y1].map((v) => v / m.width);
+};
+
+describe('full resolution follows the plan (R59.1)', () => {
+  const scene = (n: number) =>
+    image(n, n, (x, y) => {
+      const e = noise(x, y) * 2;
+      if (Math.hypot(x - n / 2, y - 0.75 * n) < 0.1 * n) return [200 + e, 40 + e, 40 + e];
+      const t = Math.min(1, Math.max(0, (y - n / 2) / Math.max(4, n / 50) + 0.5));
+      return [0, 1, 2].map(
+        (k) => [120, 170, 230][k]! * (1 - t) + [244, 246, 250][k]! * t + e,
+      ) as unknown as Rgb;
+    });
+  it('a 2048 px picture keys the same box as its 512 px version', () => {
+    const small = foregroundMask(scene(512), DEFAULT_SETTINGS, 1600);
+    const large = foregroundMask(scene(2048), DEFAULT_SETTINGS, 1600);
+    expect(small.mode).toBe('borderKey');
+    expect(large.mode).toBe('borderKey');
+    const a = box(small.mask);
+    const b = box(large.mask);
+    for (let i = 0; i < 4; i++) expect(Math.abs(a[i]! - b[i]!)).toBeLessThan(0.01);
+  });
+});
+
+describe('thin streaks reaching opposite sides (R59.1)', () => {
+  const sky = (n: number, f: (x: number, y: number) => Rgb | null) =>
+    image(n, n, (x, y) => {
+      const e = noise(x, y) * 2;
+      const c = f(x, y);
+      if (c) return [c[0] + e, c[1] + e, c[2] + e];
+      const t = Math.min(1, Math.max(0, (y - n / 2) / 8 + 0.5));
+      return [0, 1, 2].map(
+        (k) => [120, 170, 230][k]! * (1 - t) + [244, 246, 250][k]! * t + e,
+      ) as unknown as Rgb;
+    });
+  const bar =
+    (half: number, x0 = 0, x1 = 400): ((x: number, y: number) => Rgb | null) =>
+    (x, y) =>
+      Math.abs(y - 320) < half && x >= x0 && x < x1 ? [90, 80, 70] : null;
+  it('a thin full-width streak resolves to none, a thick bar and an inset bar stay keyed', () => {
+    const disc = (x: number, y: number): Rgb | null =>
+      Math.hypot(x - 200, y - 200) < 50 ? [200, 40, 40] : null;
+    const both = (f: (x: number, y: number) => Rgb | null) => (x: number, y: number) =>
+      disc(x, y) ?? f(x, y);
+    expect(foregroundMask(sky(400, both(bar(3))), DEFAULT_SETTINGS).mode).toBe('none');
+    expect(foregroundMask(sky(400, both(bar(12))), DEFAULT_SETTINGS).mode).toBe('borderKey');
+    expect(foregroundMask(sky(400, both(bar(12, 40, 360))), DEFAULT_SETTINGS).mode).toBe(
+      'borderKey',
+    );
+  });
+  it('separate discs on both side edges mean the key failed', () => {
+    const f = (x: number, y: number): Rgb | null =>
+      Math.hypot(x - 200, y - 200) < 50 ||
+      Math.hypot(x, y - 330) < 30 ||
+      Math.hypot(x - 400, y - 330) < 30
+        ? [200, 40, 40]
+        : null;
+    expect(foregroundMask(sky(400, f), DEFAULT_SETTINGS).mode).toBe('none');
   });
 });

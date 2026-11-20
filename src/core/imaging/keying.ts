@@ -17,6 +17,9 @@ const BRIDGE_T_MAX = 0.95;
 
 const COLOURS = 1 << 24;
 
+/** Share of a seed's flood that must join the first seed's keyed region for the seed to be kept. */
+const MIN_JOINED = 0.5;
+
 const keyOf = (d: Uint8ClampedArray, i: number): number =>
   (d[i]! << 16) | (d[i + 1]! << 8) | d[i + 2]!;
 
@@ -173,7 +176,7 @@ function dilate(set: Uint8Array, w: number, h: number, rounds: number): Uint8Arr
 /**
  * Pixels (1) in the seam between two seeds' floods that blend their colours: within the
  * seam half-width of both floods and, per {@link BRIDGE_T_MIN}..{@link BRIDGE_T_MAX}, on the
- * line between the seed colours within `min(cap)/2` (a blurred horizon).
+ * line between the seed colours within `min(cap)` (a blurred horizon).
  */
 function bridgePixels(
   img: RgbaImage,
@@ -216,33 +219,6 @@ function bridgePixels(
       }
     }
   return bridge;
-}
-
-/** Border pixel closest in colour to the seed: a pixel its flood is known to key. */
-function anchorOf(img: RgbaImage, distance: ColorDistance, seed: KeySeed): number {
-  const { width: w, height: h, data } = img;
-  const px: [number, number, number] = [0, 0, 0];
-  let best = 0;
-  let bestD = Infinity;
-  const visit = (p: number): void => {
-    px[0] = data[p * 4]!;
-    px[1] = data[p * 4 + 1]!;
-    px[2] = data[p * 4 + 2]!;
-    const d = distance(px, seed.rgb);
-    if (d < bestD) {
-      bestD = d;
-      best = p;
-    }
-  };
-  for (let x = 0; x < w; x++) {
-    visit(x);
-    visit((h - 1) * w + x);
-  }
-  for (let y = 1; y < h - 1; y++) {
-    visit(y * w);
-    visit(y * w + w - 1);
-  }
-  return best;
 }
 
 /** Result of {@link planKeying}. */
@@ -294,7 +270,7 @@ export function planKeying<S extends KeySeed>(
     reached[p] = 1;
     stack[sp++] = p;
   };
-  push(anchorOf(img, distance, seeds[0]!), -1);
+  for (let p = 0; p < w * h; p++) if (floods[0]![p]) push(p, -1);
   while (sp > 0) {
     const p = stack[--sp]!;
     const x = p % w;
@@ -303,21 +279,41 @@ export function planKeying<S extends KeySeed>(
     if (p >= w) push(p - w, p);
     if (p < w * (h - 1)) push(p + w, p);
   }
-  const used = seeds.filter((s, i) => i === 0 || reached[anchorOf(img, distance, s)]);
+  const used = seeds.filter((_, i) => {
+    if (i === 0) return true;
+    let size = 0;
+    let hit = 0;
+    floods[i]!.forEach((v, p) => {
+      size += v;
+      hit += v & reached[p]!;
+    });
+    return hit >= MIN_JOINED * size;
+  });
   return used.length === seeds.length
     ? { used, background, bridge }
     : planKeying(img, distance, used);
 }
 
+/** A plan from {@link planKeying} on a (possibly downsampled) picture, for {@link keyedMask}. */
+export interface CoarsePlan {
+  readonly width: number;
+  readonly height: number;
+  readonly background: Uint8Array;
+  readonly bridge: Uint8Array;
+}
+
 /**
  * Foreground (1) of `img` given a plan from {@link planKeying} on the same or a downsampled
- * picture: not in any used seed's flood, nor in the (nearest-neighbour scaled) bridge.
+ * picture: a pixel is background when a used seed's flood reaches it at full resolution, when it
+ * lies in a bridge, or when its plan cell and all that cell's neighbours are background (the plan
+ * averages away noise a full-resolution cap test would trip over); only the band along the plan's
+ * edges is decided at full resolution.
  */
 export function keyedMask(
   img: RgbaImage,
   distance: ColorDistance,
   used: readonly KeySeed[],
-  bridge?: { readonly width: number; readonly height: number; readonly data: Uint8Array },
+  coarse?: CoarsePlan,
 ): Mask {
   const { width: w, height: h } = img;
   const fg = createMask(w, h);
@@ -326,16 +322,26 @@ export function keyedMask(
     const f = floodSeed(img, distance, s);
     for (let p = 0; p < f.length; p++) if (f[p]) fg.data[p] = 0;
   }
-  if (bridge)
-    for (let y = 0; y < h; y++) {
-      const by = Math.min(bridge.height - 1, Math.floor((y * bridge.height) / h));
-      for (let x = 0; x < w; x++)
-        if (
-          bridge.data[
-            by * bridge.width + Math.min(bridge.width - 1, Math.floor((x * bridge.width) / w))
-          ]
-        )
-          fg.data[y * w + x] = 0;
+  if (!coarse) return fg;
+  const { width: cw, height: ch, background, bridge } = coarse;
+  const inner = new Uint8Array(cw * ch);
+  for (let y = 0; y < ch; y++)
+    for (let x = 0; x < cw; x++) {
+      let all = background[y * cw + x]!;
+      for (let dy = -1; dy <= 1 && all; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = Math.min(cw - 1, Math.max(0, x + dx));
+          const ny = Math.min(ch - 1, Math.max(0, y + dy));
+          if (!background[ny * cw + nx]) all = 0;
+        }
+      inner[y * cw + x] = all;
     }
+  for (let y = 0; y < h; y++) {
+    const row = Math.min(ch - 1, Math.floor((y * ch) / h)) * cw;
+    for (let x = 0; x < w; x++) {
+      const c = row + Math.min(cw - 1, Math.floor((x * cw) / w));
+      if (inner[c] || bridge[c]) fg.data[y * w + x] = 0;
+    }
+  }
   return fg;
 }
