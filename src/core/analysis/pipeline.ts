@@ -127,13 +127,14 @@ export function analyseImage(
   const { panel, detail, minLineWidthBeads, detailThreshold, work, mask, mode, fitMode, margin } =
     prep;
   const { box, minWpx } = prep;
-  const { l, hist, bg, crop, restored } = labelStage(
-    prep,
-    palette,
-    settings,
-    lap,
-    deps.detailsCache,
-  );
+  const {
+    l,
+    hist,
+    bg,
+    crop,
+    restored,
+    detail: rasterDetail,
+  } = labelStage(prep, palette, settings, lap, deps.detailsCache);
   const labelT: DebugTransform =
     deps.debug && box && crop
       ? labelTransform(img, work, settings, box, crop.img, crop.pad)
@@ -169,7 +170,7 @@ export function analyseImage(
     palette,
     fill: panel ? palette[bg]!.id : null,
   });
-  const raster = (src: LabelImage): IndexGrid =>
+  const raster = (src: LabelImage, priority = rasterDetail): IndexGrid =>
     rasterise({
       labels: src.labels,
       cover: src.cover,
@@ -183,7 +184,7 @@ export function analyseImage(
       supersample: settings.supersample,
       coverage: settings.coverage,
       detailThreshold,
-      detail,
+      detail: priority,
     });
   lap('thicken');
   let cells: IndexGrid = raster(thick);
@@ -192,7 +193,7 @@ export function analyseImage(
         ...frame,
         pattern: base,
         search: deps.ringCandidates ?? ringCandidates,
-        source: cells,
+        source: rasterDetail === detail ? cells : raster(thick, detail),
       })
     : [];
   if (plans.length > 0) {
@@ -216,7 +217,7 @@ export function analyseImage(
   let despeckledBeads = 0;
   if (settings.despeckle) {
     const before = cells;
-    cells = despeckle(cells, detail, painted?.locked);
+    cells = despeckle(cells, rasterDetail, painted?.locked);
     despeckledBeads = changedCells(before, cells);
   }
   lap('despeckle');

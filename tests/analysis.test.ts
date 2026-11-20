@@ -578,9 +578,11 @@ describe('despeckledBeads (R52.11)', () => {
   const diff = (a: Pattern, b: Pattern): number =>
     a.cells.reduce((n, row, r) => n + row.filter((c, i) => c !== b.cells[r]![i]).length, 0);
 
+  const flagged = [W, K, { ...R, detail: true }];
+
   it('counts the cells despeckle changed', () => {
-    const on = analyseImage(dots(), target, [W, K], s);
-    const off = analyseImage(dots(), target, [W, K], { ...s, despeckle: false });
+    const on = analyseImage(dots(), target, flagged, s);
+    const off = analyseImage(dots(), target, flagged, { ...s, despeckle: false });
     expect(diff(on.pattern, off.pattern)).toBeGreaterThan(0);
     expect(on.stats.despeckledBeads).toBe(diff(on.pattern, off.pattern));
   });

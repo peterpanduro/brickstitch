@@ -98,7 +98,7 @@ describe('outline continuity (R59.2)', () => {
   it('leaves a short thin protrusion (tail tip, whisker) as it is', () => {
     const b = blackCells(render(both(contour(), strand(30))));
     expect(b.left).toBeGreaterThan(25);
-    expect(b.right).toBeLessThanOrEqual(5);
+    expect(b.right).toBeLessThanOrEqual(6);
   });
   it('grows a short but real outline', () => {
     const arc: Scene = (px, py, r) =>

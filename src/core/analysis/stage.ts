@@ -15,6 +15,7 @@ import {
   type NearestFn,
   type ResolvedBackground,
 } from './prepare';
+import { autoDetail } from './autodetail';
 import { reduceColours, type ColourMatch, type Reduction } from './reduce';
 import {
   lineParams,
@@ -137,6 +138,8 @@ export interface Labelled {
   readonly crop: { readonly img: RgbaImage; readonly pad: number } | null;
   /** How well each colour cluster of the image is matched by its palette entry (R59.5). */
   readonly matches: readonly ColourMatch[];
+  /** Detail priority per colour for rasterising: the user's flags, else auto-detail (R59.4). */
+  readonly detail: readonly boolean[];
 }
 
 /** Working crop, labelling (masked median, unmixing) and palette reduction (SPEC §5.2, R19, R22). */
@@ -184,7 +187,9 @@ export function labelStage(
     at = red.at;
   } else if (p.panel && bg < 0) bg = argmax(hist);
   lap('reduce');
-  if (!crop || !(settings.details > 0) || p.minWpx <= 1) return { l, hist, bg, crop, matches };
+  const detail = autoDetail(l.labels, p.labs, p.detail);
+  if (!crop || !(settings.details > 0) || p.minWpx <= 1)
+    return { l, hist, bg, crop, matches, detail };
   const d = crop.img.data;
   const raw = new Int16Array(l.labels.length).fill(-1);
   for (let q = 0; q < raw.length; q++)
@@ -196,7 +201,7 @@ export function labelStage(
     ...(detailsCache ? { cache: detailsCache } : {}),
   });
   lap('details');
-  return { l: restored.l, hist, bg, crop, matches, restored: restored.changed };
+  return { l: restored.l, hist, bg, crop, matches, detail, restored: restored.changed };
 }
 
 /** Index of the largest count (ties: lower index); 0 when all counts are 0. */
